@@ -18,7 +18,7 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | # | Part | Complexity | Depends on | Status |
 |---|---|---|---|---|
 | 1 | Repo scaffold + deterministic extraction | L | — | ✅ |
-| 2 | LangGraph state schema + graph skeleton | M | 1 | ⬜ |
+| 2 | LangGraph state schema + graph skeleton | M | 1 | ✅ |
 | 3 | Node 1 — Scraper & Keyword agent | S | 1, 2 | ⬜ |
 | 4 | Node 2 — Data Retriever agent | L | 2 | ⬜ |
 | 5 | Node 3 — Resume Refactorer agent | L | 2, 4 | ⬜ |
@@ -60,7 +60,7 @@ pattern set grows. See [05-keyword-extraction.md](./05-keyword-extraction.md).
 
 ---
 
-## Part 2 — LangGraph state schema + graph skeleton ⬜ · M
+## Part 2 — LangGraph state schema + graph skeleton ✅ · M
 
 Stand up the graph shape before any node does real work, so routing and
 checkpointing can be tested against stub nodes.
@@ -74,8 +74,15 @@ checkpointing can be tested against stub nodes.
   (`INIT → SCRAPING → … → COMPLETE`), single source of truth for UI progress.
 - Stub node functions that only advance `current_step`.
 
-**Acceptance**: graph compiles; a test drives it end to end with stubs and
-asserts the visited-node sequence; `graph.get_graph().draw_mermaid()` renders.
+**Acceptance**: ✅ all met. 49 tests cover the topology, the routing rules as
+pure functions, both durable interrupts, the bounded self-correction loop, and
+checkpoint survival across a rebuilt graph object.
+
+**Delivered beyond plan**: `app/graph/events.py` (one event shape serving SSE,
+the checkpointed audit trail, and logs) and a second interrupt at
+`keyword_review` for extraction Layer 4. `max_iterations` is pinned as a cap on
+*total* refactor attempts, not extra retries — the looser reading would let cost
+exceed the budget by a full LLM call.
 
 ---
 
