@@ -154,3 +154,52 @@ def test_matcher_is_reusable_across_calls(matcher):
 
 def test_singleton_matcher_is_cached():
     assert get_matcher() is get_matcher()
+
+
+def test_ambiguous_patterns_are_rejected_at_build_time():
+    """A surface form claimed by two skills must fail loudly, not silently.
+
+    `add_word` keeps the last insertion, so an ambiguous taxonomy makes the
+    automaton disagree with an exhaustive scan and mislabels keywords with no
+    error raised anywhere. This was a real bug, caught by the equivalence test.
+    """
+    with pytest.raises(ValueError, match="Ambiguous taxonomy pattern"):
+        TaxonomyMatcher(
+            {
+                "Docker": {"category": "devops", "aliases": ["containers"]},
+                "Containerization": {"category": "devops", "aliases": ["containers"]},
+            }
+        )
+
+
+def test_a_skill_may_repeat_its_own_name_as_an_alias():
+    """Self-collision is redundant, not ambiguous, and must not raise."""
+    matcher = TaxonomyMatcher({"gRPC": {"category": "concept", "aliases": ["grpc"]}})
+    assert "gRPC" in matcher.find_skills("we use gRPC internally")
+
+
+def test_shipped_taxonomy_has_no_ambiguous_patterns():
+    """Guards the real data file, not just the code path."""
+    taxonomy = load_taxonomy()
+    owners: dict[str, str] = {}
+    for name, meta in taxonomy.items():
+        for form in [name, *meta.get("aliases", [])]:
+            key = form.lower().strip()
+            assert owners.get(key, name) == name, (
+                f"{key!r} is claimed by both {owners[key]!r} and {name!r}"
+            )
+            owners[key] = name
+
+
+def test_every_implication_target_is_a_canonical_skill():
+    """An implication pointing at a non-existent skill would expand to nothing."""
+    taxonomy = load_taxonomy()
+    for name, meta in taxonomy.items():
+        for target in meta.get("implies") or []:
+            assert target in taxonomy, f"{name} implies {target!r}, which is not a skill"
+
+
+def test_implications_are_not_self_referential():
+    taxonomy = load_taxonomy()
+    for name, meta in taxonomy.items():
+        assert name not in (meta.get("implies") or []), f"{name} implies itself"

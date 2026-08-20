@@ -20,7 +20,7 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 1 | Repo scaffold + deterministic extraction | L | — | ✅ |
 | 2 | LangGraph state schema + graph skeleton | M | 1 | ✅ |
 | 3 | Node 1 — Scraper & Keyword agent | S | 1, 2 | ✅ |
-| 4 | Node 2 — Data Retriever agent | L | 2 | ⬜ |
+| 4 | Node 2 — Data Retriever agent | L | 2 | ✅ |
 | 5 | Node 3 — Resume Refactorer agent | L | 2, 4 | ⬜ |
 | 6 | Node 4 — Evaluator agent + guardrails | L | 5 | ⬜ |
 | 7 | Self-correction loop + routing | M | 5, 6 | ⬜ |
@@ -111,7 +111,7 @@ cannot silently apply to a different keyword set.
 
 ---
 
-## Part 4 — Node 2: Data Retriever agent ⬜ · L
+## Part 4 — Node 2: Data Retriever agent ✅ · L
 
 Match the job's keywords against the user's stored profile and rank what is
 relevant. **No LLM** — this is the second place determinism pays off.
@@ -126,9 +126,19 @@ relevant. **No LLM** — this is the second place determinism pays off.
 - `suggestions` output: `add` (relevant item not currently on the resume) vs
   `emphasise` (already present, should move up) vs `drop`.
 
-**Acceptance**: given a seeded profile and the sample JD, the top-ranked items
-are the genuinely relevant ones; a keyword with no profile evidence produces no
-suggestion (this is what prevents hallucination downstream).
+**Acceptance**: ✅ met, and tested against the **real** profile (derived from
+`aditya_ojha_resume.tex`) rather than toy data. Against the Salesforce posting the
+top-ranked items are the LangGraph project and the Oracle role — the genuinely
+relevant ones — and Kubernetes, which the profile cannot evidence, produces no
+suggestion.
+
+**Delivered beyond plan — skill implication.** The first run reported
+"Message Queue" as a missing skill for a profile with Kafka, and "CI/CD" as
+missing for one evidencing GitHub Actions. The taxonomy was flat. Entries now
+carry an `implies` list (65 of them), and profile evidence expands along it at a
+0.7 discount with `implied_by` recorded for transparency. Implication expands
+**profile evidence only, never job-description extraction** — a posting asking
+for Kubernetes is not asking for Docker.
 
 ---
 

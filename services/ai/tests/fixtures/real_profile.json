@@ -1,0 +1,119 @@
+{
+  "_note": "Profile derived from tests/fixtures/real_resume.tex. This is the evidence set the Refactorer is allowed to draw on -- anything not represented here is a hallucination by definition.",
+  "user_id": "u-aditya",
+  "name": "Aditya Ojha",
+  "education": [
+    {
+      "id": "edu-nitrr",
+      "institution": "National Institute of Technology, Raipur",
+      "degree": "B.Tech in Computer Science and Engineering",
+      "field": "Computer Science",
+      "gpa": 8.0,
+      "start_year": 2022,
+      "end_year": 2026,
+      "text": "B.Tech in Computer Science and Engineering, CGPA 8.00/10"
+    }
+  ],
+  "experiences": [
+    {
+      "id": "exp-oracle",
+      "company": "Oracle",
+      "role": "Associate Software Developer Intern",
+      "location": "Hyderabad, Telangana",
+      "start": "2026-01",
+      "end": null,
+      "current": true,
+      "bullets": [
+        "Designed and implemented a web GUI-based configuration change logging system for a production C++ Session Border Controller platform, improving traceability, audit readiness, and change-request debugging.",
+        "Resolved 500+ compiler warnings and refactored 400+ lines of legacy C++ code, enhancing build reliability, maintainability, and review quality through production Change Requests.",
+        "Diagnosed and patched multithreaded C++ defects using GDB, strengthening memory safety, runtime stability, and failure prevention in production-oriented modules."
+      ],
+      "detail": "Worked on a C++ Session Border Controller telecom platform. Built a web GUI for configuration change logging. Heavy legacy C++ refactoring, compiler warning cleanup, multithreading defect analysis with GDB. Production change request workflow, code review, Linux debugging."
+    },
+    {
+      "id": "exp-itjobxs",
+      "company": "ITJobxs.com",
+      "role": "Software Development Engineer Intern",
+      "location": "Remote",
+      "start": "2025-01",
+      "end": "2025-02",
+      "current": false,
+      "bullets": [
+        "Implemented secure backend validation with PHP and Google reCAPTCHA, reducing bot registrations by 90% and saving 5 engineering hours per week.",
+        "Developed MERN-stack e-commerce workflows with JWT authentication and REST APIs, improving user verification speed by 3X."
+      ],
+      "detail": "PHP backend validation, Google reCAPTCHA integration, MERN stack (MongoDB, Express, React, Node.js) e-commerce flows, JWT authentication, REST API design."
+    }
+  ],
+  "projects": [
+    {
+      "id": "proj-resumeforge",
+      "name": "Automated Multi-Agent Job Pipeline",
+      "tech": ["Python", "LangGraph", "PostgreSQL", "Docker", "Playwright", "FastAPI", "Redis"],
+      "start": "2026-05",
+      "current": true,
+      "bullets": [
+        "Built an end-to-end pipeline that cut resume tailoring time from 70 minutes to under 6 by matching job URLs against user profiles and rewriting resumes.",
+        "Eliminated 100% of LLM costs for keyword extraction by replacing LLM calls with a deterministic Aho-Corasick scanner, saving ~2,000 tokens per run and reducing extraction latency from 4s to under 300ms.",
+        "Developed a self-correction loop to prevent AI hallucinations by having an Evaluator agent catch factual errors and retry with targeted feedback before user output.",
+        "Ensured zero session loss on crashes by checkpointing full pipeline state to PostgreSQL after every step, allowing users to resume exactly where they left off with no data loss or reprocessing."
+      ],
+      "detail": "Multi-agent LangGraph pipeline. Deterministic keyword extraction using Aho-Corasick over a curated skill taxonomy, plus YAKE and RAKE statistical ensemble and section-aware weighting. Playwright and BeautifulSoup tiered web scraping. PostgreSQL checkpointing via LangGraph PostgresSaver for crash recovery and durable human-in-the-loop interrupts. Docker multi-stage builds, docker-compose, GitHub Actions CI. FastAPI service with SSE streaming. Redis caching."
+    },
+    {
+      "id": "proj-encryption",
+      "name": "Parallel File Encryption Engine",
+      "tech": ["C++", "POSIX Threads", "Shared Memory", "Semaphores", "mmap"],
+      "start": "2025-03",
+      "current": true,
+      "bullets": [
+        "Designed a high-performance process-thread hybrid encryption pipeline, achieving a 5X speedup over single-threaded baselines through contention-aware queueing.",
+        "Implemented parallel file chunk processing with POSIX Threads, shared memory via mmap, and semaphores to enhance CPU utilization and synchronization efficiency."
+      ],
+      "detail": "C++ concurrency project. Process-thread hybrid model, POSIX threads, shared memory with mmap, semaphore synchronisation, contention-aware work queue, parallel file chunking. Measured 5x speedup over a single-threaded baseline."
+    }
+  ],
+  "skills": [
+    {"name": "C++", "category": "language", "proficiency": "proficient"},
+    {"name": "C", "category": "language", "proficiency": "proficient"},
+    {"name": "Python", "category": "language", "proficiency": "proficient"},
+    {"name": "Java", "category": "language", "proficiency": "familiar"},
+    {"name": "JavaScript", "category": "language", "proficiency": "proficient"},
+    {"name": "TypeScript", "category": "language", "proficiency": "familiar"},
+    {"name": "SQL", "category": "language", "proficiency": "proficient"},
+    {"name": "Bash", "category": "language", "proficiency": "proficient"},
+    {"name": "PostgreSQL", "category": "database", "proficiency": "proficient"},
+    {"name": "MySQL", "category": "database", "proficiency": "familiar"},
+    {"name": "MongoDB", "category": "database", "proficiency": "familiar"},
+    {"name": "Redis", "category": "database", "proficiency": "familiar"},
+    {"name": "Kafka", "category": "tool", "proficiency": "familiar"},
+    {"name": "Node.js", "category": "framework", "proficiency": "proficient"},
+    {"name": "FastAPI", "category": "framework", "proficiency": "proficient"},
+    {"name": "Express", "category": "framework", "proficiency": "familiar"},
+    {"name": "React", "category": "framework", "proficiency": "familiar"},
+    {"name": "PHP", "category": "language", "proficiency": "familiar"},
+    {"name": "REST API", "category": "concept", "proficiency": "proficient"},
+    {"name": "WebSockets", "category": "concept", "proficiency": "familiar"},
+    {"name": "Microservices", "category": "concept", "proficiency": "familiar"},
+    {"name": "Multithreading", "category": "concept", "proficiency": "proficient"},
+    {"name": "Data Structures", "category": "concept", "proficiency": "proficient"},
+    {"name": "Algorithms", "category": "concept", "proficiency": "proficient"},
+    {"name": "LangChain", "category": "concept", "proficiency": "proficient"},
+    {"name": "Playwright", "category": "tool", "proficiency": "familiar"},
+    {"name": "Docker", "category": "devops", "proficiency": "proficient"},
+    {"name": "AWS", "category": "cloud", "proficiency": "familiar"},
+    {"name": "Git", "category": "tool", "proficiency": "proficient"},
+    {"name": "Linux", "category": "devops", "proficiency": "proficient"},
+    {"name": "Jira", "category": "tool", "proficiency": "familiar"},
+    {"name": "Problem Solving", "category": "soft_skill", "proficiency": "proficient"},
+    {"name": "Collaboration", "category": "soft_skill", "proficiency": "proficient"},
+    {"name": "Adaptability", "category": "soft_skill", "proficiency": "proficient"}
+  ],
+  "achievements": [
+    {"id": "ach-leetcode", "title": "LeetCode", "text": "Peak rating 2230, top 0.9% in India; 250/30,000+ in Weekly Contest 429. Data structures and algorithms."},
+    {"id": "ach-codeforces", "title": "Codeforces Expert", "text": "Peak 1710; 662/18,000+ in Round 998 and 953/21,000+ in Contest 1009. Competitive programming, algorithms."},
+    {"id": "ach-codechef", "title": "CodeChef 5-Star", "text": "Peak 2023; consistently top 20% of rated contests."},
+    {"id": "ach-icpc", "title": "ICPC Regionalist", "text": "AIR 71/3000+ in Prelims and AIR 159 in the Regional Round. Team problem solving, algorithms."},
+    {"id": "ach-hackon", "title": "Amazon HackOn 2025 Semi-Finalist", "text": "Top 130 teams out of 18,000+ teams."}
+  ]
+}

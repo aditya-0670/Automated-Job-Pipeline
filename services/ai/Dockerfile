@@ -45,11 +45,19 @@ CMD ["pytest", "-v"]
 # ─────────────────────────────────────────────────────────────────────
 FROM base AS runtime
 
+# Package set driven by the actual resume template, not guessed:
+#   latex-base/recommended  geometry, fontenc, inputenc, lmodern, babel
+#   latex-extra             titlesec, enumitem, fancyhdr, tabularx, xcolor
+#   fonts-extra             fontawesome5  <-- ~1GB, and unavoidable: the
+#                           template's \faIcon links depend on it, and a
+#                           missing style file is a hard compile failure.
+# See docs/09-challenges.md for the size/compatibility trade-off.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-base \
         texlive-latex-recommended \
         texlive-fonts-recommended \
         texlive-latex-extra \
+        texlive-fonts-extra \
     && rm -rf /var/lib/apt/lists/*
 
 # Chromium goes to a fixed, world-readable path rather than the installing

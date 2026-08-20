@@ -67,6 +67,14 @@ class TaxonomyMatcher:
     def _build(taxonomy: dict[str, dict]) -> tuple[ahocorasick.Automaton, int]:
         automaton = ahocorasick.Automaton()
         count = 0
+        # A surface form must belong to exactly one canonical skill. If two
+        # entries claim the same pattern, `add_word` silently keeps whichever was
+        # inserted last -- so the automaton would return a different (and
+        # arbitrary) answer than an exhaustive scan, and keywords would be
+        # mislabelled with no error anywhere. Caught for real when adding
+        # "Containerization" as a canonical skill collided with an existing
+        # Docker alias; see docs/09-challenges.md.
+        owners: dict[str, str] = {}
         for canonical, meta in taxonomy.items():
             category = meta.get("category", "unknown")
             surface_forms = [canonical, *meta.get("aliases", [])]
@@ -74,6 +82,13 @@ class TaxonomyMatcher:
                 key = form.lower().strip()
                 if not key:
                     continue
+                if key in owners and owners[key] != canonical:
+                    raise ValueError(
+                        f"Ambiguous taxonomy pattern {key!r}: claimed by both "
+                        f"{owners[key]!r} and {canonical!r}. Each surface form "
+                        f"must map to exactly one canonical skill."
+                    )
+                owners[key] = canonical
                 # Payload carries the canonical name so alias hits normalise for
                 # free -- "k8s", "kubectl" and "Kubernetes" all resolve to one
                 # entry with no post-processing lookup table.

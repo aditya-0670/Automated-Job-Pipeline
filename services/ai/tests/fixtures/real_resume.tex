@@ -1,0 +1,195 @@
+%-------------------------
+% Resume in Latex
+%------------------------
+
+\documentclass[letterpaper,10pt]{article}
+
+\usepackage[letterpaper,left=0.46in,right=0.46in,top=0.35in,bottom=0.30in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames,table]{xcolor}
+\definecolor{BlueHeading}{RGB}{0, 102, 204}
+\usepackage[colorlinks=true, urlcolor=BlueHeading, linkcolor=BlueHeading]{hyperref}
+\usepackage{fontawesome5}
+\usepackage{enumitem}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+
+\IfFileExists{glyphtounicode.tex}{\input{glyphtounicode}\pdfgentounicode=1}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+
+%---------- LINK STYLE ----------
+\newcommand{\extlink}[2]{%
+  \href{#1}{\textcolor{BlueHeading}{#2\,\raisebox{0.1ex}{\scriptsize\faIcon{external-link-alt}}}}%
+}
+
+%---------- SECTION STYLE ----------
+\titleformat{\section}{
+  \vspace{-8pt}\scshape\raggedright\large\color{BlueHeading}
+}{}{0em}{}[\color{BlueHeading}\titlerule \vspace{-6pt}]
+
+%---------- CUSTOM COMMANDS ----------
+\newcommand{\resumeItem}[1]{\item\small{{#1}}}
+
+\newcommand{\resumeSubheading}[4]{
+  \item
+    \begin{tabular*}{\textwidth}[t]{@{}l@{\extracolsep{\fill}}r@{}}
+      \textbf{#1} & \small #2 \\
+      \textit{\small #3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-5pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+  \item
+    \begin{tabular*}{\textwidth}{@{}l@{\extracolsep{\fill}}r@{}}
+      \small #1 & \small #2 \\
+    \end{tabular*}\vspace{-5pt}
+}
+
+\newcommand{\skillItem}[2]{\item\small{\textbf{#1}{: #2}}}
+\newcommand{\achievementItem}[2]{\item\small{\textbf{#1}{: #2}}}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0in, label={}, itemsep=0pt, topsep=2pt, parsep=0pt, partopsep=0pt]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}[leftmargin=0.18in, label={\textbullet}, itemsep=1pt, topsep=3pt, parsep=0pt, partopsep=0pt]}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge \scshape ADITYA OJHA} \\ \vspace{5pt}
+    \small +91 8209970562 $|$
+    \href{mailto:adityaojha2015@gmail.com}{adityaojha2015@gmail.com} $|$
+    \href{https://www.linkedin.com/in/aditya-0670/}{aditya-0670} $|$
+    \href{https://github.com/aditya-0670}{aditya-0670}
+    \\ \vspace{2pt}
+    \small Raipur, India
+\end{center}
+\vspace{-8pt}
+
+%-----------SUMMARY-----------
+\section{Summary}
+\small{
+Software Engineering Intern and Computer Science undergraduate focused on \textbf{C++ backend systems}, \textbf{cloud-native automation}, distributed workflows, and full-stack APIs. Proficient in \textbf{C++}, Python, Java, PostgreSQL, Kafka, Docker, Linux debugging, REST APIs, and DSA. Achievements include delivering \textbf{500+ warning fixes}, achieving a \textbf{90\% reduction in bot registrations}, an \textbf{85\% reduction in workflow overhead}, and a \textbf{60\% reduction in LLM costs}.
+}
+\vspace{-4pt}
+
+%-----------EDUCATION-----------
+\section{Education}
+\resumeSubHeadingListStart
+    \resumeSubheading
+      {National Institute of Technology, Raipur}{Raipur, Chhattisgarh}
+      {B.Tech in Computer Science and Engineering; CGPA: 8.00/10}{2022 -- 2026}
+\resumeSubHeadingListEnd
+\vspace{1pt}
+
+%-----------EXPERIENCE-----------
+\section{Experience}
+\resumeSubHeadingListStart
+
+\resumeSubheading
+  {Oracle}{Hyderabad, Telangana}
+  {Associate Software Developer Intern}{January 2026 -- Present}
+
+\resumeItemListStart
+    \resumeItem{Designed and implemented a \textbf{web GUI-based configuration change logging system} for a production \textbf{C++ Session Border Controller} platform, improving traceability, audit readiness, and change-request debugging.}
+
+    \resumeItem{Resolved \textbf{500+ compiler warnings} and refactored \textbf{400+ lines} of legacy C++ code, enhancing build reliability, maintainability, and review quality through production Change Requests.}
+
+    \resumeItem{Diagnosed and patched \textbf{multithreaded C++ defects} using \textbf{GDB}, strengthening memory safety, runtime stability, and failure prevention in production-oriented modules.}
+\resumeItemListEnd
+
+\vspace{9pt}
+
+\resumeSubheading
+  {ITJobxs.com}{Remote}
+  {Software Development Engineer Intern}{January 2025 -- February 2025}
+
+\resumeItemListStart
+    \resumeItem{Implemented secure backend validation with \textbf{PHP} and \textbf{Google reCAPTCHA}, reducing bot registrations by \textbf{90\%} and saving \textbf{5 engineering hours per week}.}
+
+    \resumeItem{Developed \textbf{MERN-stack} e-commerce workflows with \textbf{JWT authentication} and REST APIs, improving user verification speed by \textbf{3X}.}
+\resumeItemListEnd
+
+\resumeSubHeadingListEnd
+\vspace{-2pt}
+
+%-----------PROJECTS-----------
+\section{Projects}
+\resumeSubHeadingListStart
+
+\resumeProjectHeading
+{\textbf{Automated Multi-Agent Job Pipeline} $|$ \emph{Python, LangGraph, Kafka, PostgreSQL, Docker, Playwright}}{May 2026 -- Present}
+\vspace{-5pt}
+
+\resumeItemListStart
+    \resumeItem{Built an end-to-end pipeline that cut resume tailoring time from \textbf{70 minutes to under 6} by matching job URLs against user profiles and rewriting resumes.}
+
+    \resumeItem{Eliminated \textbf{100\% of LLM costs} for keyword extraction by replacing LLM calls with a deterministic \textbf{Aho-Corasick scanner}, saving \textbf{\textasciitilde2,000 tokens per run} and reducing extraction latency from 4s to under 300ms.}
+
+    \resumeItem{Developed a self-correction loop to prevent AI hallucinations, ensuring \textbf{100\% accuracy} by having an Evaluator agent catch factual errors and retry with targeted feedback before user output.}
+
+    \resumeItem{Ensured \textbf{zero session loss} on crashes by checkpointing full pipeline state to PostgreSQL after every step, allowing users to resume exactly where they left off with no data loss or reprocessing.}
+\resumeItemListEnd
+
+\vspace{9pt}
+
+\resumeProjectHeading
+{\textbf{Parallel File Encryption Engine} $|$ \emph{C++, POSIX Threads, Shared Memory, Semaphores, mmap}}{March 2025 -- Present}
+\vspace{-5pt}
+
+\resumeItemListStart
+    \resumeItem{Designed a high-performance \textbf{process-thread hybrid encryption pipeline}, achieving a \textbf{5X speedup} over single-threaded baselines through contention-aware queueing.}
+
+    \resumeItem{Implemented parallel file chunk processing with \textbf{POSIX Threads}, shared memory via \texttt{mmap}, and semaphores to enhance CPU utilization and synchronization efficiency.}
+\resumeItemListEnd
+
+\resumeSubHeadingListEnd
+\vspace{-4pt}
+
+%-----------SKILLS-----------
+\section{Skills}
+\vspace{1pt}
+\begin{itemize}[leftmargin=0in, label={}, itemsep=2pt, topsep=1pt, parsep=0pt, partopsep=0pt]
+    \skillItem{Programming Languages}{C++, C, Python, Java, JavaScript, TypeScript, SQL, Bash/Shell}
+    \skillItem{Databases \& Messaging}{PostgreSQL, MySQL, MongoDB, Redis, Apache Kafka}
+    \skillItem{Backend \& APIs}{Node.js, FastAPI, PHP, REST APIs, WebSockets, Microservices, JWT Authentication, Multithreading}
+    \skillItem{AI \& Automation}{LangGraph, LLM Workflows, Prompt Engineering, Playwright}
+    \skillItem{Frontend}{React, Express}
+    \skillItem{Tools \& Platforms}{Docker, AWS, Git, Shell Scripting, Linux, GitHub, Jira}
+    \skillItem{Soft Skills}{Adaptability, Collaboration, Teamwork, Problem Solving}
+\end{itemize}
+\vspace{-4pt}
+
+%-----------ACHIEVEMENTS-----------
+\section{Achievements}
+\begin{itemize}[leftmargin=0in, label={}, itemsep=1pt, topsep=1pt, parsep=0pt, partopsep=0pt]
+    \achievementItem{LeetCode}{Peak \textbf{2230}, ranking in the \textbf{top 0.9\% in India}; placed \textbf{250/30,000+} in Weekly Contest 429.}
+
+    \achievementItem{Codeforces}{\textbf{Expert}: Peak \textbf{1710}; notable standings include \textbf{662/18,000+} in Round 998 and \textbf{953/21,000+} in Contest 1009.}
+
+    \achievementItem{CodeChef}{\textbf{5-Star}: Peak \textbf{2023}; consistently ranked within the \textbf{top 20\%} of rated contests.}
+
+    \achievementItem{ICPC}{\textbf{Regionalist}: \textbf{AIR 71/3000+} in Prelims and \textbf{AIR 159} in the Regional Round.}
+
+    \achievementItem{Hackathons}{\textbf{Amazon HackOn 2025 Semi-Finalist}: ranked in the \textbf{top 130 teams} out of \textbf{18,000+ teams}.}
+\end{itemize}
+\vspace{2pt}
+
+\end{document}
