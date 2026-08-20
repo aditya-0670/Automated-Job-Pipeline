@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+tests/__pycache__/
+out/
+*.pdf
+.env
+Dockerfile
+.dockerignore

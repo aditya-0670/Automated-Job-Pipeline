@@ -1,0 +1,32 @@
+# deps
+node_modules/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pnpm-store/
+
+# build
+.next/
+dist/
+build/
+*.egg-info/
+
+# env & secrets
+.env
+.env.local
+*.pem
+*.key
+
+# artifacts
+out/
+tmp/
+*.pdf
+*.aux
+*.log
+*.out
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store

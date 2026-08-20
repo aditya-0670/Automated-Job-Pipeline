@@ -1,0 +1,50 @@
+Senior Member of Technical Staff, Platform Engineering
+Salesforce - Hyderabad, India (Hybrid)
+
+About Salesforce
+We're Salesforce, the Customer Company. We believe business is the greatest
+platform for change. Our culture is built on trust, customer success,
+innovation and equality. Join us and be part of a team that puts people first.
+
+The Role
+As a Senior MTS on the Platform Engineering team you will design and build the
+distributed services that power our multi-tenant platform. You will own
+features end to end, from architectural design through production operation.
+
+What You'll Do
+- Design, build and operate scalable backend services in Java and Python
+- Build RESTful APIs consumed by internal and external clients
+- Work with PostgreSQL and Oracle, including query optimization and schema design
+- Containerize services with Docker and deploy them to Kubernetes
+- Build and maintain CI/CD pipelines using Jenkins and GitHub Actions
+- Instrument services for observability using Prometheus and Grafana
+- Participate in code reviews and mentor junior engineers
+- Collaborate cross-functionally with product managers and designers in an Agile environment
+
+Minimum Qualifications
+- Bachelor's degree in Computer Science or equivalent practical experience
+- 4+ years of professional software engineering experience
+- Strong proficiency in Java or Python, with solid data structures and algorithms fundamentals
+- Hands-on experience designing REST APIs and working with relational databases
+- Experience with containerization and container orchestration in production
+- Experience with at least one public cloud provider: AWS, GCP or Azure
+- Excellent communication skills and a demonstrated ability to work in a team
+
+Preferred Qualifications
+- Experience with Apache Kafka or another message queue for event-driven architecture
+- Familiarity with Terraform is a plus
+- Exposure to Salesforce platform development (Apex, SOQL, Lightning Web Components)
+- Experience with Spring Boot and Hibernate
+- Contributions to open source projects
+- Experience with Redis caching and distributed systems at scale
+
+Benefits
+- Competitive salary and equity
+- Comprehensive health insurance for you and your dependents
+- Wellness and education reimbursement
+- Parental leave and volunteer time off
+
+Salesforce is an Equal Employment Opportunity employer. Qualified applicants
+will receive consideration for employment without regard to race, colour,
+religion, sex, sexual orientation, gender identity, national origin or
+disability.
