@@ -19,9 +19,14 @@ invented facts.
 | 06 | [**Build Plan**](./06-build-plan.md) | The 20 parts, with deliverables, dependencies and acceptance criteria | working plan |
 | 07 | [Decision Log](./07-decision-log.md) | ADRs: monorepo, no Kafka, Gemini, deterministic guardrails, dev auth, model pinning, thinking tokens | authoritative |
 | 08 | [**Infrastructure**](./08-infrastructure.md) | Docker image strategy, Compose topology, health vs readiness, CI design | implemented ✅ |
+| 09 | [**Challenges & Solutions**](./09-challenges.md) | Every real problem hit, its root cause, and the fix — written to be said out loud in an interview | **interview prep** |
 
-Also: [`../resume-defend.md`](../resume-defend.md) — interview prep for the three
+Also: [`../resume-defend.md`](../resume-defend.md) — interview prep for the
 resume bullets, kept at the repo root.
+
+**For interview preparation, read [09-challenges.md](./09-challenges.md) first.**
+It is the only document containing things that went *wrong*, which is what
+interviewers actually probe.
 
 ### Which document wins
 
@@ -35,18 +40,23 @@ able to explain.
 
 ## Current state (2026-08-20)
 
-**Parts 1, 2, 3, 16, 17 of 20 complete.** 117 tests green.
+**Parts 1, 2, 3, 4, 10, 16, 17 of 20 complete.** 143 tests green.
 
 - **1** — deterministic extraction: 148 skills / 489 patterns, 2.8ms per posting
   vs a naive baseline's 9.5ms, and flat as the pattern set grows.
 - **2, 3** — the LangGraph graph with both durable interrupts, the bounded
   self-correction loop, and Node 1 (scrape → extract) wired in.
+- **4** — Node 2 retrieves and ranks profile evidence via a second automaton,
+  with skill implication so Kafka evidences "Message Queue".
+- **10** — durable checkpointing proven against real Postgres: an expensive node
+  runs exactly once across a simulated crash.
 - **16, 17** — pulled forward: a working Compose stack (`make up`, `make smoke`)
   and GitHub Actions CI with path filtering and an image smoke test.
 
-Next: Part 10 (PostgresSaver checkpointing — now unblocked by a real Postgres),
-then Parts 4-9 to complete the pipeline, then 11-15 for the HTTP surface and
-application services, then 18-20 for Jenkins, Kubernetes and AWS.
+Next: Parts 5-9 — the Refactorer and Evaluator (the first real LLM calls), the
+self-correction loop, human review, and LaTeX compilation. Then 11-15 for the
+HTTP surface and application services, then 18-20 for Jenkins, Kubernetes
+and AWS.
 
 ---
 
