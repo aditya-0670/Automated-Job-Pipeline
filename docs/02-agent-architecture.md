@@ -7,6 +7,17 @@
 
 ---
 
+> ### 📌 Document status
+> **Design document (v0.2.0) — the reasoning behind the agent pipeline.**
+> The agent definitions (§2), state schema (§3), self-correction loop (§4),
+> guardrails (§6), and token budget (§7) are what is being implemented in
+> Parts 2-11.
+> **Superseded**: §8-9 (3-service polyrepo → one monorepo, see
+> [ADR-001](./07-decision-log.md#adr-001--monorepo-not-3-polyrepos)) and the
+> Kafka references throughout (no broker is used, see
+> [ADR-002](./07-decision-log.md#adr-002--no-kafka)).
+> Authoritative architecture: [03-as-built-architecture.md](./03-as-built-architecture.md).
+
 ## Table of Contents
 
 1. [Why Multi-Agent? Why LangGraph?](#1-why-multi-agent-why-langgraph)

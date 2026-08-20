@@ -29,7 +29,7 @@
 |---|---|---|---|
 | Bullet 1 | LangGraph, Playwright, PostgreSQL, Docker | Kafka, "event-driven", "85%" metric | ⚠️ Needs framing |
 | Bullet 2 | PostgreSQL state, retry handling, lifecycle mgmt | Kafka, "distributed execution" | ⚠️ Needs framing |
-| Bullet 3 | Deterministic extraction, cost reduction | Aho-Corasick (needs implementation) | 🟡 Fix before interview |
+| Bullet 3 | Deterministic extraction, cost reduction, **Aho-Corasick** | The 60% figure needs precise framing | ✅ **Implemented & benchmarked** |
 
 ---
 ---
@@ -255,7 +255,7 @@ The `current_step` field in state tracks every stage. Stored to PostgreSQL after
 ---
 ---
 
-# 🟨 BULLET 3
+# 🟩 BULLET 3
 
 ## Claim
 > *"Built deterministic keyword extraction using the Aho-Corasick algorithm, reducing LLM token extraction costs by 60% while improving efficiency of AI-assisted automation workflows."*
@@ -298,8 +298,64 @@ def taxonomy_force_match(jd_text: str, automaton: ahocorasick.Automaton) -> list
     return list(matched)
 ```
 
-**Why Aho-Corasick over naive search:**
-> *"With 2000 taxonomy entries and a 5000-word JD, naive does 2000 substring searches = ~10M char comparisons. Aho-Corasick does one pass = 5000 comparisons. As taxonomy grows to 5000-10000 entries, naive gets linearly slower. Aho-Corasick stays O(n) per search."*
+**⚠️ The above is the naive integration and it is WRONG — know why.**
+`pyahocorasick` matches raw substrings, so this finds `R` inside `React`, `Go`
+inside `Google`, `C` inside `Customer`, and `Java` inside `JavaScript`. The real
+implementation boundary-checks every hit:
+
+> *"Three things the algorithm doesn't give you for free. One, word-boundary
+> validation — I check both sides of every match against `[a-z0-9_]`, and
+> deliberately exclude `-`, `.`, `+` and `/` from the boundary set because real
+> skill names contain them: c++, .net, node.js, ci/cd. Two, longest-match-wins —
+> the automaton reports every pattern ending at a position, so 'spring boot'
+> also yields 'spring'; I drop nested matches with a linear sweep. Three, alias
+> normalisation happens in the payload — each pattern carries its canonical name,
+> so k8s and kubectl and Kubernetes collapse to one entry during the scan itself,
+> with no lookup table afterwards."*
+
+Actual implementation: `services/ai/app/extraction/aho.py`. Eight parametrised
+tests pin the boundary behaviour, and one test asserts the automaton returns the
+**identical** skill set as the naive baseline — without that, the benchmark would
+be meaningless.
+
+**Why Aho-Corasick over naive search — USE THE MEASURED NUMBERS, NOT A COMPARISON COUNT:**
+
+> *"I benchmarked it against a naive baseline that scans the text once per pattern. On a 4,771-word posting with 489 taxonomy patterns: naive 9.5ms, Aho-Corasick 2.8ms — 3.4x. But the constant factor isn't the real argument. I held the text fixed and grew the pattern set: at 489 patterns the automaton takes 2.88ms, at 1,821 patterns it takes 2.91ms — flat. The naive baseline goes from 9.6ms to 20.6ms over the same range. Query time is independent of pattern count, so growing the taxonomy is free at query time and only costs build time — 0.8ms, once at startup."*
+
+| Patterns | Aho-Corasick | Naive | Speedup |
+|---|---|---|---|
+| 489 | 2.88 ms | 9.60 ms | 3.3x |
+| 933 | 2.84 ms | 13.41 ms | 4.7x |
+| 1,821 | 2.91 ms | 20.63 ms | **7.1x** |
+
+> ⚠️ **Do not use the old "~10M char comparisons vs 5000" framing.** It
+> understates the naive baseline (`str.find` runs in optimised C, not
+> character-by-character Python) and invites a follow-up you can't win. The
+> measured table above is stronger and survives scrutiny.
+
+---
+
+### 1b. The Performance Bug — YOUR BEST ANSWER IN THIS SECTION
+
+If asked *"did you actually measure it?"* or *"tell me about a time you debugged
+a performance problem"*, this is the story. It is real and it is specific.
+
+> *"My first benchmark had Aho-Corasick LOSING to the naive baseline — 22.6ms
+> against 10.3ms — and getting worse as I added patterns, which is the opposite
+> of what the algorithm guarantees. So the algorithm wasn't the problem, my
+> integration was. Two causes. First, my longest-match-wins deduplication
+> checked each candidate against every already-kept match — O(k²), and on a
+> repetitive posting the automaton reports thousands of hits, so that dominated
+> everything. Second, I was allocating a frozen dataclass for every reported
+> match before filtering. pyahocorasick scans in C but yields to Python on every
+> single match, so per-match Python overhead swamped the C-speed scan — while
+> the naive baseline's str.find loop stayed entirely in C. I made the dedup a
+> single linear sweep over start-sorted matches, and kept raw hits as plain
+> tuples so only survivors pay for object construction. 22.6ms to 2.8ms, and the
+> pattern-count curve went flat."*
+
+**The takeaway to state out loud**: *"Better asymptotic complexity doesn't
+survive a constant factor paid inside the inner loop."*
 
 ---
 
@@ -356,7 +412,7 @@ def taxonomy_force_match(jd_text: str, automaton: ahocorasick.Automaton) -> list
 | **Kafka** | "Evaluated it, designed the topic schema, determined PostgreSQL checkpointing was sufficient at MVP scale — Kafka is the v2 upgrade" |
 | **PostgreSQL** | "Dual role: LangGraph checkpoint store for full pipeline state AND application data for user profiles and resume history" |
 | **Docker** | "3 services (web/api/ai) + postgres + redis. Critical for Playwright's Chromium and LaTeX compilation consistency" |
-| **Aho-Corasick** | "Multi-pattern string matching — O(n) scan of entire JD vs O(n×m) naive. Build automaton from 2000 skill patterns once, search once per JD" |
+| **Aho-Corasick** | "Multi-pattern matching — one O(n+z) pass over the JD vs O(n·m) naive. 148 skills / 489 patterns, automaton built once at startup in 0.8ms. Measured 2.8ms vs 9.5ms, and flat as the taxonomy grows" |
 
 ## Metric Defenses
 
@@ -364,7 +420,8 @@ def taxonomy_force_match(jd_text: str, automaton: ahocorasick.Automaton) -> list
 |---|---|
 | **85% overhead** | Manual tailoring ~70 min → automated flow ~6 min = 91%, conservatively 85% |
 | **60% token cost** | LLM keyword extraction ~2000 tokens/JD → deterministic = 0 tokens |
-| **<300ms extraction** | Aho-Corasick O(n) scan vs 3-5s LLM API call |
+| **<300ms extraction** | Measured: automaton 2.8ms, full 4-layer pipeline well under 300ms, vs a 2-5s LLM API call. Asserted in `test_completes_well_under_300ms`. |
+| **3.4x-7.1x speedup** | Measured vs a naive O(n·m) baseline; gap widens as the taxonomy grows |
 
 ## The Kafka Answer (Memorize This Exactly)
 > *"I evaluated Kafka for decoupling the services and async job queuing. I defined four topics: `resume-jobs`, `resume-pipeline-events`, `resume-status`, `resume-dlq`, with user_id partitioning for ordering. After prototyping, LangGraph's PostgreSQL checkpointing gave me the durability I needed and SSE gave real-time updates — without running a broker. At MVP scale, Kafka's operational overhead outweighed the benefit. It's the v2 architecture for multi-tenant concurrent job processing."*
@@ -373,14 +430,21 @@ def taxonomy_force_match(jd_text: str, automaton: ahocorasick.Automaton) -> list
 
 ## Study Schedule
 
-| When | What to Do |
-|---|---|
-| **Today** | Implement `pyahocorasick` in the taxonomy scanner. Benchmark it. |
-| **Day 2** | Read LangGraph `PostgresSaver` source code. Understand checkpoint schema. |
-| **Day 3** | Study Kafka: topics, partitions, consumer groups, offsets, DLQ. |
-| **Day 4** | Time a manual resume tailoring session. Document the baseline for metrics. |
-| **Night before** | Read this entire file. Say the Kafka framing out loud 3 times. |
+| When | What to Do | Status |
+|---|---|---|
+| ~~Day 1~~ | ~~Implement `pyahocorasick` in the taxonomy scanner. Benchmark it.~~ | ✅ **done** — 39 tests green, benchmarks in [docs/05-keyword-extraction.md](./docs/05-keyword-extraction.md) |
+| **Day 2** | Build Parts 2-11: the LangGraph pipeline. Read `PostgresSaver` while wiring it — you'll understand the checkpoint schema by using it. | ⬜ |
+| **Day 3** | Study Kafka: topics, partitions, consumer groups, offsets, DLQ. Read [ADR-002](./docs/07-decision-log.md) for the decision framing. | ⬜ |
+| **Day 4** | Parts 16-18: Docker Compose, GitHub Actions, Jenkins. Run each pipeline yourself at least once. | ⬜ |
+| **Day 5** | Part 19: `kind` cluster. Do the demo — scale the AI service to 3 replicas, kill a pod mid-pipeline, show no work lost. **This is your proof for bullet 2.** | ⬜ |
+| **Day 6** | Part 20: EC2 deploy. Get a public URL. | ⬜ |
+| **Night before** | Read this entire file. Say the Kafka framing out loud 3 times. Re-read the performance-bug story — it's your strongest answer. | ⬜ |
+
+> **Memorise the measured numbers, not the estimates.** Every figure in this file
+> that says "measured" can be reproduced with
+> `docker run --rm resumeforge-ai:test pytest tests/test_benchmark.py -s`.
+> Run it the night before so the numbers are fresh.
 
 ---
 
-*Last updated: 2026-08-19*
+*Last updated: 2026-08-20*

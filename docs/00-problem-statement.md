@@ -6,6 +6,16 @@
 
 ---
 
+> ### 📌 Document status
+> **Reference — requirements, not scope.** This captures the full product vision.
+> The MVP deliberately does not implement all of it. Requirements deferred in the
+> MVP: **FR-01** (Google OAuth — see [ADR-005](./07-decision-log.md#adr-005--dev-mode-jwt-instead-of-google-oauth-for-the-mvp)),
+> **FR-08** (chat UI — see [ADR-007](./07-decision-log.md#adr-007--one-flow-page-not-a-chat-ui)),
+> and GitHub *OAuth* (a personal access token is used instead; the indexing in
+> FR-02.4 is still built).
+> For what is actually being built, see [03-as-built-architecture.md](./03-as-built-architecture.md)
+> and [06-build-plan.md](./06-build-plan.md).
+
 ## 1. Problem Statement
 
 ### 1.1 The Landscape

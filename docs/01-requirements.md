@@ -5,10 +5,20 @@
 > **Author**: Aditya
 >
 > ⚠️ **NOTE**: The architecture has been upgraded from a linear pipeline to a **LangGraph multi-agent graph**.
-> See [multi_agent_architecture.md](file:///home/aditya/job-automation-project/docs/multi_agent_architecture.md) for the updated design.
+> See [02-agent-architecture.md](./02-agent-architecture.md) for the updated design.
 > This document is preserved as the foundational reference — sections marked with ⚠️ have been superseded.
 
 ---
+
+> ### 📌 Document status
+> **Reference — original technical design, partially superseded.**
+> Still accurate and useful: the system flows (§3), component deep dives (§4),
+> data models (§5), API design (§6), and challenge analysis (§7).
+> **Superseded**: §2 (technology stack — the LLM provider is Gemini, there is no
+> BullMQ job queue, and storage is a container volume rather than S3), §8
+> (project structure — see [04-code-map.md](./04-code-map.md)), §9 (deployment —
+> see [06-build-plan.md](./06-build-plan.md) Parts 16-20), and §10 (phases —
+> replaced by the 20-part plan).
 
 ## Table of Contents
 
@@ -28,7 +38,7 @@
 ## 1. Architecture Overview
 
 > ⚠️ **SUPERSEDED**: The linear pipeline below has been replaced by a multi-agent LangGraph architecture.
-> See [multi_agent_architecture.md](file:///home/aditya/job-automation-project/docs/multi_agent_architecture.md) for the current design.
+> See [02-agent-architecture.md](./02-agent-architecture.md) for the current design.
 > The diagram below is preserved for historical context.
 
 ```mermaid
@@ -268,7 +278,7 @@ glassdoor.com   → Headless browser (anti-scraping measures)
 
 **Purpose**: Extract ATS-relevant keywords from job description text. **No LLM used.**
 
-> **Updated in v0.2.0**: The algorithm has been expanded from a 2-step YAKE+RAKE ensemble to a **4-layer extraction pipeline** that optimizes for **high recall** (≥ 90%), minimizing false negatives. See [multi_agent_architecture.md — Keyword Relevance](file:///home/aditya/job-automation-project/docs/multi_agent_architecture.md) for the full pipeline design, including Skill Taxonomy Force-Match, Section-Aware Weighting, and User Confirmation Checkpoint.
+> **Updated in v0.2.0**: The algorithm has been expanded from a 2-step YAKE+RAKE ensemble to a **4-layer extraction pipeline** that optimizes for **high recall** (≥ 90%), minimizing false negatives. See [02-agent-architecture.md — Keyword Relevance](./02-agent-architecture.md) for the full pipeline design, including Skill Taxonomy Force-Match, Section-Aware Weighting, and User Confirmation Checkpoint. **This layer is now implemented and measured** — see [05-keyword-extraction.md](./05-keyword-extraction.md).
 
 **Algorithm: 4-Layer Keyword Extraction Pipeline**
 
@@ -818,7 +828,7 @@ Total:                      ~4,000 tokens
 
 ### Challenge 8: GitHub Data Freshness
 
-> ⚠️ **EXPANDED**: This challenge has been significantly expanded in [multi_agent_architecture.md § Section 5](file:///home/aditya/job-automation-project/docs/multi_agent_architecture.md) with a multi-layer freshness strategy.
+> ⚠️ **EXPANDED**: This challenge has been significantly expanded in [02-agent-architecture.md § 5](./02-agent-architecture.md) with a multi-layer freshness strategy.
 
 **Problem**: User's GitHub repos change over time. Cached repo data may become stale. In a multi-agent pipeline, stale data directly impacts the Data Retriever Agent's recommendations.
 
@@ -845,8 +855,8 @@ Total:                      ~4,000 tokens
 ```
 job-automation-project/
 ├── docs/
-│   ├── problem_statement.md
-│   └── project_requirements.md
+│   ├── 00-problem-statement.md
+│   └── 01-requirements.md
 │
 ├── src/
 │   ├── app/                          # Next.js App Router
