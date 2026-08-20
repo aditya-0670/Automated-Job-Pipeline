@@ -67,6 +67,23 @@ def test_initial_state_is_json_serialisable():
     json.dumps(base_state())
 
 
+def test_current_step_is_stored_as_a_plain_string():
+    """LangGraph warns on deserialising unregistered types and will block them.
+
+    An enum instance in checkpointed state is therefore a latent failure, not a
+    style question. `Step` is a StrEnum so comparisons still read naturally.
+    """
+    state = base_state()
+    assert type(state["current_step"]) is str
+    assert state["current_step"] == Step.INIT  # StrEnum compares by value
+
+    graph = build_graph(checkpointer=InMemorySaver())
+    config = {"configurable": {"thread_id": "t-serial"}}
+    graph.invoke(state, config=config)
+    stored = graph.get_state(config).values["current_step"]
+    assert type(stored) is str, f"checkpointed a {type(stored)}, not a str"
+
+
 def test_events_reducer_appends_rather_than_replaces():
     """Without an append reducer each node would overwrite the audit trail."""
     assert add_events([{"a": 1}], [{"b": 2}]) == [{"a": 1}, {"b": 2}]

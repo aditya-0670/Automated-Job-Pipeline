@@ -90,4 +90,5 @@ def should_skip_scraping(state: ResumeForgeState) -> bool:
 
 
 def is_terminal(state: ResumeForgeState) -> bool:
-    return state.get("current_step") in {Step.COMPLETE, Step.FAILED}
+    # Compares as strings: current_step is stored as a str, and Step is a StrEnum.
+    return state.get("current_step") in {Step.COMPLETE.value, Step.FAILED.value}

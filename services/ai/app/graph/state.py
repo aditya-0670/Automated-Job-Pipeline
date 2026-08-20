@@ -4,9 +4,11 @@ LangGraph merges each node's returned partial dict into this state and then
 checkpoints the whole thing to Postgres. Two consequences shape the design:
 
   * **Everything here must be JSON-serialisable.** No dataclasses, no sets, no
-    datetimes. Domain objects (`Keyword`, `SkillMatch`) are converted to plain
-    dicts at the node boundary. This is why the state looks flatter than the
-    internal types.
+    datetimes, and *no enum instances* -- LangGraph warns on deserialising
+    unregistered types and will block them in a future version. `current_step`
+    is therefore stored as a plain `str`; `Step` is a `StrEnum`, so
+    `state["current_step"] == Step.SCRAPING` still compares correctly, and
+    `Step(state["current_step"])` recovers the enum when one is wanted.
 
   * **Fields are additive, not authoritative.** A node returns only the keys it
     changed; LangGraph does the merge. Returning a whole state object from a node
@@ -81,7 +83,7 @@ class ResumeForgeState(TypedDict, total=False):
     evaluator_feedback: str  # structured feedback driving the retry
 
     # ─── Control flow (Part 7) ───
-    current_step: Annotated[Step, keep_last]
+    current_step: Annotated[str, keep_last]  # a Step value, stored as str
     iteration_count: int  # self-correction attempts used
     max_iterations: int
     error: str | None
@@ -138,7 +140,7 @@ def initial_state(
         changelog=[],
         evaluation={},
         evaluator_feedback="",
-        current_step=Step.INIT,
+        current_step=Step.INIT.value,
         iteration_count=0,
         max_iterations=max_iterations,
         error=None,

@@ -53,7 +53,8 @@ def _passthrough(step: Step) -> NodeFn:
     """A stub node that only advances `current_step`."""
 
     def node(state: ResumeForgeState) -> dict[str, Any]:
-        return {"current_step": step}
+        # .value, not the enum: see the serialisation note in state.py.
+        return {"current_step": step.value}
 
     node.__name__ = f"stub_{step.value.lower()}"
     return node

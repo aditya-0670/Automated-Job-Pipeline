@@ -19,7 +19,7 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 |---|---|---|---|---|
 | 1 | Repo scaffold + deterministic extraction | L | — | ✅ |
 | 2 | LangGraph state schema + graph skeleton | M | 1 | ✅ |
-| 3 | Node 1 — Scraper & Keyword agent | S | 1, 2 | ⬜ |
+| 3 | Node 1 — Scraper & Keyword agent | S | 1, 2 | ✅ |
 | 4 | Node 2 — Data Retriever agent | L | 2 | ⬜ |
 | 5 | Node 3 — Resume Refactorer agent | L | 2, 4 | ⬜ |
 | 6 | Node 4 — Evaluator agent + guardrails | L | 5 | ⬜ |
@@ -86,7 +86,7 @@ exceed the budget by a full LLM call.
 
 ---
 
-## Part 3 — Node 1: Scraper & Keyword agent ⬜ · S
+## Part 3 — Node 1: Scraper & Keyword agent ✅ · S
 
 Thin wiring — the hard work already exists from Part 1.
 
@@ -98,8 +98,16 @@ Thin wiring — the hard work already exists from Part 1.
 - Graceful path: on `ScrapeError`, set state error and expect `job_text` to be
   supplied by manual paste instead.
 
-**Acceptance**: unit test with a stubbed scraper; a manual-paste path test that
-skips scraping entirely.
+**Acceptance**: ✅ all met. 13 tests with a stubbed scraper cover all three
+input paths (URL, cache hit, pasted text), failure translation, and the
+zero-token contract.
+
+**Delivered beyond plan**: `clients/cache.py` is an interface
+(`Null`/`Memory`/`Redis`) rather than a hard Redis dependency, so unit tests need
+no server and a cache outage is indistinguishable from a miss — an optional
+optimisation must never be able to fail the pipeline. Re-running the node via the
+`modify_keywords` route resets `keywords_confirmed`, so an earlier approval
+cannot silently apply to a different keyword set.
 
 ---
 
