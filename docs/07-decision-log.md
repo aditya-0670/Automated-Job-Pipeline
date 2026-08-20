@@ -182,3 +182,85 @@ so a source change never re-triggers it.
 
 **Consequence.** Tests that genuinely need a browser or `pdflatex` must run
 against the `runtime` target and are marked as integration tests.
+
+---
+
+## ADR-009 — Pin `gemini-3.7-flash`, and treat model IDs as verifiable facts
+
+**Date**: 2026-08-20 · **Status**: accepted · **Amends**: [ADR-003](#adr-003--gemini-behind-a-provider-interface)
+
+**Context.** The initial config pinned `gemini-2.0-flash`, taken from the design
+docs. Querying `GET /v1beta/models` with the real key showed it **does not
+exist** — and `gemini-2.5-flash` returns
+`404 … no longer available to new users`. Available stable flash models are
+`gemini-3.5-flash`, `gemini-3.6-flash`, `gemini-3.7-flash`.
+
+**Decision.** Pin `gemini-3.7-flash`. Verify model IDs against the live models
+endpoint rather than trusting documentation or memory.
+
+**Reasoning.** Model lifecycles are short and retirement is silent from the
+code's point of view — it surfaces as a 404 at runtime, not at build time. An
+explicit pin (rather than the `gemini-flash-latest` alias) keeps behaviour
+reproducible; the alias would let a model change under a working system. The
+trade-off is that pins need periodic revisiting, which is the correct place for
+that cost.
+
+**Observed during verification**: `gemini-3.7-flash` returned `503 UNAVAILABLE`
+("high demand") on two separate probes. Transient overload is a normal operating
+condition, not an exceptional one — which is why the provider retries 5xx and 429
+with exponential backoff over 4 attempts.
+
+---
+
+## ADR-010 — Official `google-genai` SDK, not `langchain-google-genai`
+
+**Date**: 2026-08-20 · **Status**: accepted
+
+**Context.** The original requirement set included `langchain-google-genai` for
+LLM calls, on the assumption that LangGraph requires LangChain model objects.
+It does not — LangGraph orchestrates arbitrary Python functions.
+
+**Decision.** Call Gemini through the official `google-genai` SDK inside
+`GeminiProvider`. Keep `langchain-core` only as a LangGraph dependency.
+
+**Reasoning.** Two concrete problems with the wrapper, both found by testing it:
+
+1. It still imports the **deprecated** `google.generativeai` package, which
+   prints an end-of-support warning and receives no fixes.
+2. It reported **`output_tokens: 0`** for a Gemini 3.x call that actually
+   consumed 94 tokens. Reasoning tokens are billed as output but are not part of
+   `candidates_token_count`, and the wrapper dropped them. A project that makes
+   token-cost claims cannot have a silently wrong token counter.
+
+The provider interface is four methods; the wrapper was adding a dependency, a
+deprecation, and a measurement bug in exchange for nothing.
+
+---
+
+## ADR-011 — Track thinking tokens explicitly, and budget them
+
+**Date**: 2026-08-20 · **Status**: accepted
+
+**Context.** Gemini 3.x models emit reasoning tokens before their answer.
+Measured on a trivial prompt ("Reply with exactly: OK"): 1 output token and
+**72 thinking tokens**. On `gemini-3.6-flash`, 116.
+
+**Decision.** `LLMResponse` carries `thinking_tokens` as its own field, separate
+from `output_tokens`, with `billed_output_tokens` combining them. Thinking budget
+is configurable per call (`LLM_THINKING_BUDGET`, default 512).
+
+**Reasoning.** Reporting thinking tokens as output loses the ability to reason
+about them; omitting them understates cost by an order of magnitude on short
+responses. Both are wrong in a project whose value proposition is token cost.
+
+A small explicit budget measured dramatically cheaper than the default: with
+`thinking_budget=128`, a trivial prompt cost **11 total tokens versus 65** with
+the default. Curiously `thinking_budget=0` did *not* disable reasoning (53
+thinking tokens still appeared), so a small positive budget is the effective
+setting.
+
+**Second-order consequence.** With thinking models, an exhausted output budget
+produces **no text at all** rather than truncated text — the reasoning consumes
+the allowance first. `max_output_tokens` is therefore set generously (16,384) and
+`LLMTruncatedError` distinguishes this case from a transient failure, since
+retrying an under-budgeted request unchanged will fail identically.

@@ -1,32 +1,37 @@
 # ─── Web framework ───
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-pydantic==2.10.5
-pydantic-settings==2.7.1
-sse-starlette==2.2.1
+fastapi==0.141.1
+uvicorn[standard]==0.52.4
+pydantic==2.13.4
+pydantic-settings==2.13.1
+sse-starlette==3.4.8
 
 # ─── Deterministic keyword extraction (zero LLM tokens) ───
-pyahocorasick==2.1.0
-yake==0.4.8
+pyahocorasick==2.3.1
+yake==0.7.3
 
 # ─── Agent orchestration ───
-langgraph==0.2.62
-langgraph-checkpoint-postgres==2.0.9
-langchain-core==0.3.29
-langchain-google-genai==2.0.8
+langgraph==1.2.11
+langgraph-checkpoint-postgres==3.1.2
+langchain-core==1.6.0
+
+# ─── LLM: the official Google SDK, not the LangChain wrapper.
+#     langchain-google-genai still depends on the deprecated
+#     google.generativeai package and reports output_tokens=0 for
+#     thinking models, which would break our token accounting.
+google-genai==2.19.0
 
 # ─── Scraping ───
 httpx==0.28.1
-beautifulsoup4==4.12.3
-lxml==5.3.0
-playwright==1.49.1
+beautifulsoup4==4.14.2
+lxml==6.0.2
+playwright==1.62.0
 
 # ─── Data layer ───
-sqlalchemy[asyncio]==2.0.36
-asyncpg==0.30.0
-psycopg[binary,pool]==3.2.3
-redis==5.2.1
+sqlalchemy[asyncio]==2.0.44
+asyncpg==0.31.0
+psycopg[binary,pool]==3.3.4
+redis==7.1.0
 
 # ─── Utilities ───
-python-json-logger==3.2.1
-tenacity==9.0.0
+python-json-logger==4.0.0
+tenacity==9.1.4

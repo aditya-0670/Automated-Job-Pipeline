@@ -29,9 +29,17 @@ class Settings(BaseSettings):
     # ── LLM ──
     llm_provider: Literal["gemini", "mock"] = "gemini"
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash"
+    # gemini-2.0-flash and gemini-2.5-flash are retired for new API keys.
+    # Verified live against the models list; see docs/07-decision-log.md ADR-009.
+    gemini_model: str = "gemini-3.7-flash"
     llm_temperature: float = 0.2
-    llm_max_output_tokens: int = 8192
+    # Generous, because on thinking models reasoning consumes this budget before
+    # any text is emitted -- too low yields zero-length output, not short output.
+    llm_max_output_tokens: int = 16384
+    # Gemini 3.x reasoning tokens are billed as output. A small explicit budget
+    # measured far cheaper than the default: 11 total tokens vs 65 on a trivial
+    # prompt. -1 leaves the model's default in place.
+    llm_thinking_budget: int = 512
 
     # ── Pipeline behaviour ──
     max_self_correction_iterations: int = 3
