@@ -109,7 +109,33 @@ class LLMError(RuntimeError):
 
 
 class LLMTransientError(LLMError):
-    """Overload, rate limit, or timeout -- worth retrying."""
+    """Overload, rate limit, or timeout -- worth retrying.
+
+    `retry_after` carries the delay the API itself asked for, when it supplies
+    one. Guessing a backoff when the server has told you the answer is how a
+    client ends up hammering a quota it could have waited out.
+    """
+
+    def __init__(self, message: str, *, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class LLMQuotaError(LLMTransientError):
+    """Free-tier quota exhausted (429). Retryable, but only after a real wait."""
+
+
+def parse_retry_delay(message: str) -> float | None:
+    """Pull the server-specified retry delay out of a Gemini error payload.
+
+    Gemini reports it twice -- as `'retryDelay': '58s'` and as
+    "Please retry in 58.44s" -- so both shapes are accepted.
+    """
+    for pattern in (r"'retryDelay':\s*'(\d+(?:\.\d+)?)s'", r"retry in (\d+(?:\.\d+)?)s"):
+        found = re.search(pattern, message)
+        if found:
+            return float(found.group(1))
+    return None
 
 
 class LLMTruncatedError(LLMError):
@@ -177,23 +203,73 @@ def parse_json(text: str) -> dict[str, Any]:
     raise LLMError(f"Model did not return parseable JSON: {cleaned[:300]!r}")
 
 
+def _server_directed_wait(fallback):
+    """Wait for the delay the API asked for, if it supplied one."""
+
+    def wait(retry_state):
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        requested = getattr(exc, "retry_after", None)
+        if requested:
+            # Capped: a 60s+ instruction is honest but a request should not hang
+            # a user's session on it -- the fallback model is the better answer.
+            return min(float(requested) + 1.0, 30.0)
+        return fallback(retry_state)
+
+    return wait
+
+
 class GeminiProvider(LLMProvider):
     name = "gemini"
 
-    def __init__(self, api_key: str, model: str) -> None:
+    def __init__(self, api_key: str, model: str, fallbacks: list[str] | None = None) -> None:
         from google import genai
 
         self.model = model
+        self.fallbacks = list(fallbacks or [])
         self._client = genai.Client(api_key=api_key)
+
+    async def complete(
+        self,
+        *,
+        system: str,
+        user: str,
+        thinking_budget: int | None = None,
+        json_mode: bool = False,
+    ) -> LLMResponse:
+        """Try the primary model, then each fallback, before giving up.
+
+        Fallback triggers only on transient failures (overload, quota). A 400 is
+        our bug and would fail identically on every model, so it propagates
+        immediately rather than burning quota on three models.
+        """
+        last_error: LLMTransientError | None = None
+        for candidate in [self.model, *self.fallbacks]:
+            try:
+                return await self._complete_with(
+                    candidate,
+                    system=system,
+                    user=user,
+                    thinking_budget=thinking_budget,
+                    json_mode=json_mode,
+                )
+            except LLMTransientError as exc:
+                last_error = exc
+                logger.warning(
+                    "Model %s unavailable (%s); trying next candidate",
+                    candidate,
+                    type(exc).__name__,
+                )
+        raise last_error or LLMError("No Gemini model was available")
 
     @retry(
         retry=retry_if_exception_type(LLMTransientError),
-        stop=stop_after_attempt(4),
-        wait=wait_exponential(multiplier=1, min=2, max=20),
+        stop=stop_after_attempt(3),
+        wait=_server_directed_wait(wait_exponential(multiplier=1, min=2, max=30)),
         reraise=True,
     )
-    async def complete(
+    async def _complete_with(
         self,
+        model: str,
         *,
         system: str,
         user: str,
@@ -218,16 +294,21 @@ class GeminiProvider(LLMProvider):
 
         try:
             response = await self._client.aio.models.generate_content(
-                model=self.model,
+                model=model,
                 contents=user,
                 config=types.GenerateContentConfig(**config),
             )
         except errors.ServerError as exc:  # 5xx -- overload, worth retrying
-            raise LLMTransientError(f"Gemini unavailable: {exc}") from exc
+            raise LLMTransientError(
+                f"Gemini unavailable: {exc}", retry_after=parse_retry_delay(str(exc))
+            ) from exc
         except errors.ClientError as exc:
-            # 429 is a rate limit and retryable; other 4xx are our fault.
+            # 429 is quota exhaustion: retryable, but only after the delay the
+            # API specifies. Other 4xx are our own fault and must not retry.
             if getattr(exc, "code", None) == 429:
-                raise LLMTransientError(f"Gemini rate limited: {exc}") from exc
+                raise LLMQuotaError(
+                    f"Gemini quota exceeded: {exc}", retry_after=parse_retry_delay(str(exc))
+                ) from exc
             raise LLMError(f"Gemini rejected the request: {exc}") from exc
         except Exception as exc:
             raise LLMTransientError(f"Gemini call failed: {exc}") from exc
@@ -242,7 +323,7 @@ class GeminiProvider(LLMProvider):
             input_tokens=getattr(usage, "prompt_token_count", 0) or 0,
             output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
             thinking_tokens=getattr(usage, "thoughts_token_count", 0) or 0,
-            model=self.model,
+            model=model,
             finish_reason=finish_reason,
         )
 
@@ -282,7 +363,7 @@ class MockProvider(LLMProvider):
         json_mode: bool = False,
     ) -> LLMResponse:
         logger.warning("MockProvider in use -- no LLM configured. Output is synthetic.")
-        payload = self._respond(system, user)
+        payload = self._respond(system, user, json_mode=json_mode)
         return LLMResponse(
             text=payload,
             # ~4 chars per token is a rough proxy, enough to exercise accounting.
@@ -293,23 +374,56 @@ class MockProvider(LLMProvider):
         )
 
     @staticmethod
-    def _respond(system: str, user: str) -> str:
+    def _respond(system: str, user: str, *, json_mode: bool = False) -> str:
+        """Shape the response to what the caller actually asked for.
+
+        The refactorer requests JSON containing a `latex` key. Returning bare
+        LaTeX there fails parsing, which would make the whole offline path
+        untestable -- the mock exists precisely so that cannot happen.
+
+        Role is detected from the SYSTEM prompt only. Matching against the user
+        message too looked harmless and was not: a real resume contains words
+        like "review" and "evaluate", so the refactor request was being answered
+        with an evaluator payload. Dispatch must key on text we author, never on
+        user content.
+        """
+        role = system.lower()
         lowered = f"{system}\n{user}".lower()
-        if "evaluat" in lowered:
+
+        if "evaluat" in role or "reviewer" in role:
             return json.dumps(
                 {
                     "passed": True,
                     "factual_errors": [],
                     "grounding_errors": [],
                     "structural_errors": [],
+                    "quality_issues": [],
                     "keyword_coverage": 0.82,
                     "feedback": "Mock evaluator: no issues detected.",
                 }
             )
+
         latex = _extract_latex_block(user)
         if latex:
-            return f"% ResumeForge (mock provider -- no LLM configured)\n{latex}"
-        if "json" in lowered:
+            annotated = f"% ResumeForge (mock provider -- no LLM configured)\n{latex}"
+            if json_mode or "resume editor" in role:
+                return json.dumps(
+                    {
+                        "latex": annotated,
+                        "changelog": [
+                            {
+                                "section": "Summary",
+                                "change_type": "reworded",
+                                "before": "(mock)",
+                                "after": "(mock)",
+                                "reason": "MockProvider: no LLM configured",
+                            }
+                        ],
+                    }
+                )
+            return annotated
+
+        if json_mode or "json" in lowered:
             return json.dumps({"mock": True, "note": "MockProvider response"})
         return "Mock provider response."
 
@@ -323,7 +437,9 @@ def get_llm() -> LLMProvider:
     """Resolve the configured provider, degrading to the mock without a key."""
     settings = get_settings()
     if settings.llm_configured:
-        return GeminiProvider(settings.gemini_api_key, settings.gemini_model)
+        return GeminiProvider(
+            settings.gemini_api_key, settings.gemini_model, settings.fallback_models
+        )
     logger.warning(
         "No LLM credentials found (LLM_PROVIDER=%s). Using MockProvider; "
         "set GEMINI_API_KEY for real generation.",

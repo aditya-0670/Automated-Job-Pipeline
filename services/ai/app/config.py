@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     # gemini-2.0-flash and gemini-2.5-flash are retired for new API keys.
     # Verified live against the models list; see docs/07-decision-log.md ADR-009.
     gemini_model: str = "gemini-3.7-flash"
+    # Tried in order when the primary returns 503 (overload) or 429 (quota).
+    # Measured reality on the free tier: gemini-3.7-flash allows 5 requests per
+    # minute and 20 per day, and returns 503 "high demand" often enough to see
+    # it several times in one session. A single pipeline run needs at least two
+    # calls, so without a fallback the product is unusable for long stretches.
+    # Lite models carry higher free-tier limits, so they are the safety net.
+    gemini_fallback_models: str = "gemini-3.1-flash-lite,gemini-3.5-flash"
     llm_temperature: float = 0.2
     # Generous, because on thinking models reasoning consumes this budget before
     # any text is emitted -- too low yields zero-length output, not short output.
@@ -46,6 +53,10 @@ class Settings(BaseSettings):
     scrape_timeout_seconds: float = 15.0
     latex_compile_timeout_seconds: int = 60
     max_job_text_chars: int = 60_000
+
+    @property
+    def fallback_models(self) -> list[str]:
+        return [m.strip() for m in self.gemini_fallback_models.split(",") if m.strip()]
 
     @property
     def llm_configured(self) -> bool:

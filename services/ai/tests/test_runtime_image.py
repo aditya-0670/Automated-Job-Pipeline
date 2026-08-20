@@ -91,17 +91,22 @@ SHIPPED_PACKAGES = (
     "tabularx",
     "multirow",
     "ragged2e",
+    # Required by the real template. lmodern is a standalone Debian package;
+    # fontawesome5 is installed from CTAN rather than via texlive-fonts-extra,
+    # which would have cost 1.5GB to obtain one icon font.
+    "lmodern",
+    "fancyhdr",
+    "fontawesome5",
 )
 
 #: Packages the image does NOT ship, recorded deliberately.
 #:
-#: `fontawesome5` (icons in contact lines) and `moderncv` live in
-#: texlive-fonts-extra, which is over a gigabyte on an image that is already
-#: 2.9GB. Since a template either uses them or does not, the cost is only worth
-#: paying once we know the actual template. Part 9 detects a missing package
-#: from the pdflatex log and reports it as an actionable error rather than
-#: "compilation failed", so this degrades honestly.
-NOT_SHIPPED_PACKAGES = ("fontawesome5", "moderncv")
+#: `moderncv` is a whole resume class the real template does not use. If a future
+#: template needs it, it can be installed from CTAN the same way fontawesome5 is.
+#: Part 9 reads the missing-package name out of the pdflatex log and reports it
+#: as an actionable error rather than "compilation failed", so this degrades
+#: honestly rather than silently.
+NOT_SHIPPED_PACKAGES = ("moderncv",)
 
 
 @needs_latex
@@ -110,6 +115,20 @@ def test_shipped_latex_packages_are_present(package):
     """Resume templates lean on latex-extra styles; a missing one fails at compile."""
     result = subprocess.run(["kpsewhich", f"{package}.sty"], capture_output=True, text=True)
     assert result.returncode == 0, f"{package}.sty is missing from the image"
+
+
+@needs_latex
+def test_fontawesome_mapping_file_is_present():
+    """The .sty alone is not enough.
+
+    fontawesome5.sty loads fontawesome5-mapping.def via \\file_input. Copying
+    only *.sty from the CTAN package built an image that had fontawesome5 and
+    still could not compile a document using it.
+    """
+    result = subprocess.run(
+        ["kpsewhich", "fontawesome5-mapping.def"], capture_output=True, text=True
+    )
+    assert result.returncode == 0, "fontawesome5-mapping.def is missing"
 
 
 @needs_latex
@@ -125,4 +144,52 @@ def test_known_absent_packages_stay_documented(package):
     assert result.returncode != 0, (
         f"{package}.sty is now present -- move it to SHIPPED_PACKAGES "
         f"and update docs/08-infrastructure.md"
+    )
+
+
+@needs_latex
+def test_fontawesome_glyphs_actually_render(tmp_path):
+    """The install must be complete, not merely importable.
+
+    Loading fontawesome5.sty without errors proves nothing about the glyphs: the
+    real resume declares \\usepackage{fontawesome5} and defines an \\extlink
+    macro around \\faIcon, but never calls it -- so no icon font is embedded and
+    a broken font install would look identical to a working one.
+
+    This document actually uses icons, so the FontAwesome fonts must appear in
+    the output PDF.
+    """
+    import re
+    import zlib
+
+    source = tmp_path / "fa.tex"
+    source.write_text(
+        r"""\documentclass{article}
+\usepackage{fontawesome5}
+\begin{document}
+\faIcon{envelope} \faIcon{external-link-alt} \faGithub
+\end{document}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "fa.tex"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout[-1200:]
+
+    pdf = (tmp_path / "fa.pdf").read_bytes()
+    names: set[bytes] = set(re.findall(rb"/BaseFont\s*/([A-Za-z0-9+#-]+)", pdf))
+    for stream in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        try:
+            names |= set(re.findall(rb"/BaseFont\s*/([A-Za-z0-9+#-]+)", zlib.decompress(stream)))
+        except Exception:
+            continue
+
+    embedded = {name.decode() for name in names}
+    assert any("FontAwesome" in name for name in embedded), (
+        f"no FontAwesome font was embedded; fonts found: {sorted(embedded)}"
     )

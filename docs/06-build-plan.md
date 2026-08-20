@@ -21,11 +21,11 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 2 | LangGraph state schema + graph skeleton | M | 1 | ✅ |
 | 3 | Node 1 — Scraper & Keyword agent | S | 1, 2 | ✅ |
 | 4 | Node 2 — Data Retriever agent | L | 2 | ✅ |
-| 5 | Node 3 — Resume Refactorer agent | L | 2, 4 | ⬜ |
+| 5 | Node 3 — Resume Refactorer agent | L | 2, 4 | ✅ |
 | 6 | Node 4 — Evaluator agent + guardrails | L | 5 | ⬜ |
 | 7 | Self-correction loop + routing | M | 5, 6 | ⬜ |
 | 8 | Node 5 — Human review interrupt | M | 7 | ⬜ |
-| 9 | Node 6 — LaTeX → PDF compilation | M | 2 | ⬜ |
+| 9 | Node 6 — LaTeX → PDF compilation | M | 2 | ✅ |
 | 10 | PostgresSaver checkpointing | M | 2 | ✅ |
 | 11 | FastAPI surface + SSE streaming | L | 3-10 | ⬜ |
 | 12 | Postgres schema + Prisma + seed profile | M | — | ⬜ |
@@ -142,7 +142,7 @@ for Kubernetes is not asking for Docker.
 
 ---
 
-## Part 5 — Node 3: Resume Refactorer agent ⬜ · L
+## Part 5 — Node 3: Resume Refactorer agent ✅ · L
 
 The first real LLM call. Everything about it is designed around a token budget
 and around not letting the model invent facts.
@@ -156,9 +156,17 @@ and around not letting the model invent facts.
   (NFR-02.2), with a hard token ceiling and a truncation strategy.
 - Correction mode: accepts prior output + evaluator feedback for Part 7.
 
-**Acceptance**: with the mock provider the node returns compilable LaTeX; token
-accounting is recorded in state; assembled prompt stays under 4,000 input tokens
-for the sample JD (NFR-02.4).
+**Acceptance**: ✅ met. The assembled prompt for the real resume and posting is
+under 4,000 input tokens, verified by a test. Live Gemini calls confirm the
+preamble, all 12 packages and all 10 custom macros survive, every `\section`
+is preserved in order, and the model claims none of the forbidden skills.
+
+**Delivered beyond plan**: evidence is fitted to the token budget by dropping
+from the least-relevant end with a floor of 3 items (and a warning when it
+truncates, since a silently shortened prompt is a silently worse resume); a
+model fallback chain and server-directed retry, because the free tier is 20
+requests/day and returns 503 often (see challenges 18); and a repair for
+double-escaped LaTeX from JSON round-trips.
 
 ---
 
@@ -216,7 +224,7 @@ process resumes it from the checkpoint with a decision and it continues.
 
 ---
 
-## Part 9 — Node 6: LaTeX → PDF compilation ⬜ · M
+## Part 9 — Node 6: LaTeX → PDF compilation ✅ · M
 
 **Deliverables**
 - `app/compile/latex.py` — `pdflatex` in a temp dir, two passes, timeout,
@@ -225,9 +233,15 @@ process resumes it from the checkpoint with a decision and it continues.
   lines of TeX noise (NFR-05.4).
 - `app/compile/sanitize.py` — reject dangerous primitives before compiling.
 
-**Acceptance**: a real resume template compiles to a valid PDF inside the
-runtime image; a malformed template returns a readable error; a `\write18`
-attempt is rejected.
+**Acceptance**: ✅ met with the **real** template — 164KB, 1 page, 572ms,
+including `fontawesome5` and all 10 custom macros. Nine dangerous primitives are
+rejected; a missing package is reported by name; `\write18` never reaches
+pdflatex.
+
+**Delivered beyond plan**: `pdf_content_hash()` masking the non-deterministic
+`/ID` trailer so identical input hashes identically (useful for caching), an
+escaped-percent-aware comment stripper (resumes are full of `60\%`, and treating
+that as a comment would delete the rest of the line), and page-count warnings.
 
 ---
 

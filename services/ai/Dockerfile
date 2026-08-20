@@ -45,19 +45,24 @@ CMD ["pytest", "-v"]
 # ─────────────────────────────────────────────────────────────────────
 FROM base AS runtime
 
-# Package set driven by the actual resume template, not guessed:
-#   latex-base/recommended  geometry, fontenc, inputenc, lmodern, babel
-#   latex-extra             titlesec, enumitem, fancyhdr, tabularx, xcolor
-#   fonts-extra             fontawesome5  <-- ~1GB, and unavoidable: the
-#                           template's \faIcon links depend on it, and a
-#                           missing style file is a hard compile failure.
-# See docs/09-challenges.md for the size/compatibility trade-off.
+# Package set derived by parsing the real template's \usepackage lines and then
+# checking each one with kpsewhich, rather than guessed:
+#   latex-base / recommended  geometry, fontenc, inputenc, babel, glyphtounicode
+#   latex-extra               titlesec, enumitem, fancyhdr, tabularx, xcolor,
+#                             hyperref
+#   lmodern                   the template's body font (a standalone Debian
+#                             package, not part of any texlive-* set)
+#
+# texlive-fonts-extra is deliberately NOT installed. It is the package that
+# carries fontawesome5, but it also drags in every other extra font including
+# CJK sets -- 624MB compressed, ~1.5GB unpacked, to obtain one icon font.
+# fontawesome5 is installed on its own below at 12MB, 125x smaller.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         texlive-latex-base \
         texlive-latex-recommended \
         texlive-fonts-recommended \
         texlive-latex-extra \
-        texlive-fonts-extra \
+        lmodern \
     && rm -rf /var/lib/apt/lists/*
 
 # Chromium goes to a fixed, world-readable path rather than the installing
@@ -68,6 +73,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN playwright install --with-deps chromium \
     && chmod -R a+rX /ms-playwright
+
+# fontawesome5, straight from CTAN. The template's contact line and \extlink
+# macro use \faIcon, and a missing .sty is a hard compile failure -- there is
+# nothing to degrade to.
+#
+# This is a build-time network fetch, which is normally a reproducibility
+# hazard. Accepted here because the alternative is 1.5GB, and mitigated by
+# pinning the archive URL and asserting the outcome in the same layer: if CTAN
+# changes shape, the build fails here rather than a resume failing to compile
+# in production.
+#
+# Placed after the Playwright layer deliberately: this is the layer most
+# likely to need editing, and putting it last means a change here does not
+# re-download Chromium.
+ARG FONTAWESOME_URL=https://mirrors.ctan.org/fonts/fontawesome5.zip
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends unzip; \
+    cd /tmp; \
+    curl -fsSL -o fa.zip "$FONTAWESOME_URL"; \
+    unzip -q fa.zip; \
+    T=/usr/share/texmf; \
+    install -d "$T/tex/latex/fontawesome5" \
+               "$T/fonts/type1/public/fontawesome5" \
+               "$T/fonts/tfm/public/fontawesome5" \
+               "$T/fonts/enc/dvips/fontawesome5" \
+               "$T/fonts/map/dvips/fontawesome5" \
+               "$T/fonts/opentype/public/fontawesome5"; \
+    cp fontawesome5/tex/*      "$T/tex/latex/fontawesome5/"; \
+    cp fontawesome5/type1/*    "$T/fonts/type1/public/fontawesome5/"; \
+    cp fontawesome5/tfm/*      "$T/fonts/tfm/public/fontawesome5/"; \
+    cp fontawesome5/enc/*      "$T/fonts/enc/dvips/fontawesome5/"; \
+    cp fontawesome5/map/*      "$T/fonts/map/dvips/fontawesome5/"; \
+    cp fontawesome5/opentype/* "$T/fonts/opentype/public/fontawesome5/"; \
+    mktexlsr; \
+    updmap-sys --enable Map=fontawesome5.map; \
+    kpsewhich fontawesome5.sty; \
+    kpsewhich fontawesome5-mapping.def; \
+    rm -rf /tmp/fa.zip /tmp/fontawesome5; \
+    apt-get purge -y unzip; apt-get autoremove -y; \
+    rm -rf /var/lib/apt/lists/*
 
 COPY . .
 

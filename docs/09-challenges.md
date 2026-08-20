@@ -22,7 +22,8 @@ The strongest three, if you only memorise three:
 |---|---|---|
 | **1** | [The algorithm that lost to the baseline](#challenge-1--aho-corasick-was-slower-than-the-naive-baseline) | Shows you measure, profile, and know the difference between asymptotics and constant factors |
 | **4** | [A silent taxonomy ambiguity](#challenge-4--a-silently-wrong-automaton-ambiguous-taxonomy-patterns) | Shows a test caught a *correctness* bug that produced no error |
-| **7** | [Chromium the image contained but could not run](#challenge-7--the-image-contained-chromium-and-could-not-launch-it) | Shows you understand containers, users, and why test coverage had a structural blind spot |
+| **11** | [Chromium the image contained but could not run](#challenge-11--the-image-contained-chromium-and-could-not-launch-it) | Shows you understand containers, users, and why test coverage had a structural blind spot |
+| **18** | [Designing around a 20-request-per-day quota](#challenge-18--the-free-tier-is-20-requests-per-day) | Shows you read the error payload, honour server directives, and design a fallback |
 
 ---
 ---
@@ -438,6 +439,129 @@ needs a specific Chromium plus a long list of shared libraries, and TeX Live is 
 2GB install with OS-specific quirks that must produce byte-identical PDFs in dev
 and prod.
 
+
+## Challenge 18 — The free tier is 20 requests per day
+
+**Symptom.** Five live integration tests for the Refactorer ran, and the API
+returned, verbatim:
+
+```
+429 RESOURCE_EXHAUSTED
+Quota exceeded for metric: generate_content_free_tier_requests,
+limit: 5,  model: gemini-3.7-flash      <- per minute
+limit: 20, model: gemini-3.7-flash      <- per DAY
+Please retry in 58.44s
+```
+
+Interleaved with `503 UNAVAILABLE ("high demand")` on the same model.
+
+**Why this is a design constraint, not an inconvenience.** One pipeline run needs
+at least two model calls (refactor + evaluate), and a self-correction round adds
+more. Twenty requests per day is roughly **seven complete runs**, and five test
+assertions were consuming a quarter of the daily budget every time the suite ran.
+
+**Three fixes, each addressing a different part of the problem:**
+
+1. **Honour the server's own retry delay.** The API replies with
+   `'retryDelay': '58s'` and "Please retry in 58.44s". The original code ignored
+   both and applied a guessed exponential backoff maxing out at 20s — so it
+   retried *before* the quota window reopened and burned attempts for nothing.
+   `parse_retry_delay()` now reads either form, and the wait is capped at 30s
+   because a user's request should not hang for a minute.
+
+2. **A model fallback chain.** On 503 or 429 the provider tries
+   `gemini-3.1-flash-lite`, then `gemini-3.5-flash`. Lite models carry higher
+   free-tier limits, so a degraded answer beats no answer. Fallback fires **only**
+   on transient failures — a 400 is our own bug and would fail identically on
+   every model, so it propagates immediately rather than burning quota three times.
+
+3. **One live generation shared across all live assertions.** A module-scoped
+   fixture runs the refactor once; the five assertions inspect that one result.
+   Test runs went from 5 requests to 1.
+
+**The line to say:** *"The API tells you how long to wait. Guessing a backoff when
+the server has already answered that question is how a client hammers a quota it
+could have waited out."*
+
+---
+
+## Challenge 19 — The mock dispatched on the user's resume text
+
+**Symptom.** `MockProvider` returned an *evaluator* payload to the *refactorer*,
+so the offline path failed with "the model returned no LaTeX document".
+
+**Root cause.** The mock chose its response by searching `system + user` for
+words like `"evaluat"` and `"reviewer"`. The user message contains the
+candidate's actual resume — and a real resume contains words like "review" and
+"evaluate". So user content was steering control flow.
+
+**Fix.** Dispatch on the **system prompt only**, which is text we author.
+
+**The generalisable lesson, which is the interesting part:** this is the same
+shape as prompt injection. Untrusted content was being read as an instruction
+about how to behave. Here it produced a confusing test failure; in a system where
+user content reaches a dispatcher with real authority, it is a security bug.
+
+---
+
+## Challenge 20 — An image that had fontawesome5 and still could not use it
+
+**Symptom.** After installing `fontawesome5` from CTAN and asserting
+`kpsewhich fontawesome5.sty` succeeded, compiling the real resume failed:
+
+```
+! LaTeX Error: File 'fontawesome5-mapping.def' not found.
+l.26 \file_input:n{fontawesome5-mapping.def}
+```
+
+**Root cause.** The install copied `fontawesome5/tex/*.sty`. The package also
+ships `fontawesome5-mapping.def`, which `fontawesome5.sty` loads at runtime via
+`\file_input`. Copying only the style files produced an install that *passed the
+verification check* and could not compile a document.
+
+**Fix.** Copy everything under `tex/`, and assert **both** files in the same
+build layer, so a partial install fails the build rather than a resume in
+production.
+
+**Related and worth noting:** the real template `\usepackage{fontawesome5}` and
+defines an `\extlink` macro around `\faIcon` — but never calls it. So no icon
+font is embedded in the output, and a completely broken font install would have
+looked identical to a working one. The test therefore compiles a document that
+*does* use `\faIcon` and asserts `FontAwesome5Free-Solid` appears among the
+embedded fonts. **Verifying a dependency is present is not the same as verifying
+it works.**
+
+---
+
+## Challenge 21 — Reproducible PDFs, except for 32 hex characters
+
+**Symptom.** Compiling identical LaTeX twice produced PDFs differing at exactly
+one place:
+
+```
+/ID [<CB2CD362EA63D21647F7377E24126425> ...]
+/ID [<277F6BD3E71043629ECC82CAD48AAA43> ...]
+```
+
+**Why it mattered.** A diff view has to distinguish a real content change from
+noise. If every compile differs, PDF-level change detection and output caching
+are both impossible.
+
+**Two findings:**
+
+1. **`SOURCE_DATE_EPOCH` alone does nothing.** pdfTeX honours it only when
+   `FORCE_SOURCE_DATE=1` is also set. With just the epoch it still stamps the
+   real time. Setting both removed the timestamp difference.
+
+2. **The `/ID` trailer is derived from the output path**, so two compiles in
+   different temp directories differ there and nowhere else — verified by
+   stripping `/ID` and asserting byte equality.
+
+**Fix.** A `pdf_content_hash()` that masks `/ID` before hashing. That is the hash
+caching and change-detection actually want, and it is paired with a test proving
+the hash still *changes* when content changes — a lenient hash that never differs
+would be worse than none.
+
 ---
 ---
 
@@ -468,6 +592,8 @@ was designed rather than just that it exists.
 | `test_matches_are_equivalent_to_naive_baseline` | That the benchmark is a fair comparison | A silent taxonomy ambiguity mislabelling keywords (Challenge 4) |
 | `ruff` lint gate in CI | Code style | A genuine `B023` closure-capture bug in the benchmark — loop variables captured instead of bound |
 | Running the graph end to end with stubs | That routing works | An enum in checkpointed state that would break on a future LangGraph release (Challenge 10) |
+| `kpsewhich fontawesome5.sty` in the build | That the font install worked | Nothing — it passed while the install was broken. The test that *did* catch it compiles a document using an icon (Challenge 20) |
+| A "these packages are absent" test | Documentation drift | It failed the moment fonts were added, forcing the docs to be updated instead of going stale |
 | The `/ready` probe | Orchestrator health reporting | That the service starts fine with an unreachable database, so degradation had to be reported rather than assumed |
 
 **The line to say:** *"The most valuable tests I wrote caught bugs they weren't
