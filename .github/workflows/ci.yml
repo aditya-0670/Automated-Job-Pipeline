@@ -177,6 +177,31 @@ jobs:
           test "$code" = "401" || { echo "::error::expected 401 without key, got $code"; exit 1; }
           docker rm -f ai-smoke
 
+  ai-integration:
+    name: ai · integration (browser + LaTeX)
+    needs: [changes, ai-test]
+    if: needs.changes.outputs.ai == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v3
+      - name: Build runtime-test image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/ai
+          target: runtime-test
+          push: false
+          load: true
+          tags: resumeforge-ai:runtime-test
+          cache-from: type=gha,scope=ai-runtime
+          cache-to: type=gha,scope=ai-runtime,mode=max
+      - name: Verify Chromium and pdflatex work as the service user
+        # The fast test image has neither, so these paths are otherwise
+        # unverified -- which is exactly how a Chromium-not-found bug shipped.
+        run: |
+          docker run --rm resumeforge-ai:runtime-test \
+            pytest tests/test_runtime_image.py -v
+
   # ── Infra ─────────────────────────────────────────────────────────────
   compose-validate:
     name: infra · validate compose
@@ -200,7 +225,7 @@ jobs:
   ci-status:
     name: CI status
     runs-on: ubuntu-latest
-    needs: [ai-lint, ai-test, ai-build, compose-validate]
+    needs: [ai-lint, ai-test, ai-integration, ai-build, compose-validate]
     if: always()
     steps:
       - name: Fail if any job failed

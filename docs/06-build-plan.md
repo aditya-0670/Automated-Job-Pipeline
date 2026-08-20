@@ -26,7 +26,7 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 7 | Self-correction loop + routing | M | 5, 6 | ⬜ |
 | 8 | Node 5 — Human review interrupt | M | 7 | ⬜ |
 | 9 | Node 6 — LaTeX → PDF compilation | M | 2 | ⬜ |
-| 10 | PostgresSaver checkpointing | M | 2 | ⬜ |
+| 10 | PostgresSaver checkpointing | M | 2 | ✅ |
 | 11 | FastAPI surface + SSE streaming | L | 3-10 | ⬜ |
 | 12 | Postgres schema + Prisma + seed profile | M | — | ⬜ |
 | 13 | Express API gateway | L | 11, 12 | ⬜ |
@@ -221,7 +221,7 @@ attempt is rejected.
 
 ---
 
-## Part 10 — PostgresSaver checkpointing ⬜ · M
+## Part 10 — PostgresSaver checkpointing ✅ · M
 
 **Interview-critical — this is bullet 1's "fault-tolerant" and bullet 2's
 "state tracking".**
@@ -233,8 +233,19 @@ attempt is rejected.
 - A kill-and-resume integration test: run to mid-pipeline, drop the process,
   rebuild the graph, resume from the checkpoint, assert no lost work.
 
-**Acceptance**: that test passes against a real Postgres container. This is the
-single most valuable test in the repo for interview purposes.
+**Acceptance**: ✅ met. 12 tests pass against the real Postgres in Compose,
+including the kill-and-resume test and a stronger one: an *expensive* node runs
+exactly once across a simulated crash, proving recovery does not repeat LLM
+spend. Verified in the database directly — `checkpoints`, `checkpoint_blobs`,
+`checkpoint_writes` tables, one row per node transition, partitioned by
+`thread_id`.
+
+**Delivered beyond plan**: `latest_state()` so the gateway can answer "where is
+my session?" after a page reload **without advancing the graph**; `thread_config()`
+raises on an empty session id, because a typo would silently start a fresh thread
+and lose the session. The service degrades honestly if Postgres is unreachable —
+it still starts and serves extraction, and `/ready` reports
+`checkpointer: unavailable` rather than crash-looping the container.
 
 ---
 

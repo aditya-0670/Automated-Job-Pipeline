@@ -19,9 +19,10 @@ part:
 
 | Stage | Contains | Size | Used by |
 |---|---|---|---|
-| `base` | Python 3.12 + pinned runtime deps | ~1.2 GB | nothing directly |
-| `test` | `base` + pytest/ruff | ~1.26 GB | CI test job, local dev, hot reload |
-| `runtime` | `base` + Playwright Chromium + TeX Live | ~2.5 GB | production |
+| `base` | Python 3.12 + pinned runtime deps | ~790 MB | nothing directly |
+| `test` | `base` + pytest/ruff | **837 MB** | CI test job, local dev, hot reload |
+| `runtime` | `base` + Playwright Chromium + TeX Live | ~2.9 GB | production |
+| `runtime-test` | `runtime` + test tooling | ~2.9 GB | integration tests only |
 
 **Why split.** Chromium and TeX Live together are well over a gigabyte, and unit
 tests need neither. Building them into the test path would mean every CI test run
@@ -32,6 +33,40 @@ never re-triggers the apt install.
 The trade-off, stated honestly: tests that genuinely need a browser or LaTeX must
 target `runtime` and are marked as integration tests. Two code paths (Tier 2
 scraping and PDF compilation) are therefore not exercised by the fast suite.
+
+**That gap hid a real bug.** `playwright install` ran as root, so Chromium landed
+in root's `~/.cache/ms-playwright` — while the service runs as `appuser`. The
+image contained the browser and could not launch it, and Playwright printed
+"please run playwright install" from inside the image that had it. Nothing in the
+fast suite could have caught this, because the fast image has no browser to find.
+Fixed by pinning `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` and making it
+world-readable; the `runtime-test` stage exists so the capability is now verified
+**as the non-root service user** rather than assumed.
+
+### Image size: 1.26GB → 837MB
+
+`build-essential` was in the base layer "to compile pyahocorasick's C
+extension". Measured, it was 338MB of image for nothing: every pinned dependency
+ships a manylinux wheel for CPython 3.12, pyahocorasick included. Removing it cut
+the test image by **34%**, and CI pulls that layer on every run.
+
+The general lesson worth stating: a compiler in a production image is both dead
+weight and attack surface. If a future dependency genuinely needs to build from
+source, the fix is a builder stage that compiles a wheel and a runtime stage that
+copies it forward — not shipping a toolchain to production.
+
+### Known gap: LaTeX font packages
+
+`fontawesome5` (icons in contact lines) and `moderncv` are **not** in the image.
+They live in `texlive-fonts-extra`, which is over a gigabyte on an image already
+at 2.9GB, and a given resume template either needs them or does not — so the cost
+is only worth paying once the actual template is known.
+
+This is pinned by a test that asserts they are *absent*, so if a future image
+adds them the test fails and forces the docs to be updated, rather than the gap
+quietly closing and this section going stale. Part 9 reads the missing-package
+name out of the `pdflatex` log and reports it as an actionable error instead of
+"compilation failed".
 
 ### Why Docker at all, for this project specifically
 

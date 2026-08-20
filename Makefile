@@ -43,6 +43,20 @@ bench: ## Print the Aho-Corasick benchmark tables
 integration: ## Run tests including live Gemini calls (needs GEMINI_API_KEY)
 	docker run --rm --env-file .env -v "$(PWD)/$(AI_DIR)":/app:z $(AI_TEST_IMAGE) pytest tests/ -v
 
+.PHONY: build-runtime-test
+build-runtime-test: ## Build the runtime image plus test tooling
+	docker build --target runtime-test -t resumeforge-ai:runtime-test $(AI_DIR)
+
+.PHONY: test-runtime
+test-runtime: build-runtime-test ## Verify Chromium + pdflatex work as the service user
+	docker run --rm resumeforge-ai:runtime-test pytest tests/test_runtime_image.py -v
+
+.PHONY: test-checkpoint
+test-checkpoint: ## Run checkpointing tests against the running Postgres
+	docker compose exec -T \
+		-e DATABASE_URL="postgresql://resumeforge:resumeforge@postgres:5432/resumeforge" \
+		ai pytest tests/test_checkpointing.py -v
+
 .PHONY: lint
 lint: ## Run the same gates CI runs
 	$(AI_RUN) ruff check .

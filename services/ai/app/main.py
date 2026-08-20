@@ -15,16 +15,19 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
 
+from app.agents.scraper_keyword import scraper_keyword_agent
 from app.clients.cache import get_cache
 from app.config import Settings, get_settings
 from app.extraction.aho import get_matcher
 from app.extraction.pipeline import extract_keywords
+from app.graph.builder import SCRAPER_KEYWORD, build_graph
+from app.graph.checkpointer import async_checkpointer
 from app.logging_config import configure_logging, request_id_var, session_id_var
 
 logger = logging.getLogger(__name__)
@@ -42,20 +45,40 @@ async def lifespan(app: FastAPI):
     matcher = get_matcher()
     app.state.matcher = matcher
     app.state.cache = get_cache()
-    app.state.ready = True
-    logger.info(
-        "AI service ready",
-        extra={
-            "taxonomy_skills": len(matcher.taxonomy),
-            "taxonomy_patterns": matcher.pattern_count,
-            "build_ms": round((time.perf_counter() - started) * 1000, 2),
-            "llm_provider": settings.llm_provider if settings.llm_configured else "mock",
-            "model": settings.gemini_model if settings.llm_configured else "mock",
-        },
-    )
-    yield
-    app.state.ready = False
-    logger.info("AI service shutting down")
+
+    # The checkpointer's connection pool must live as long as the app, so it is
+    # entered on an exit stack rather than a `with` block.
+    async with AsyncExitStack() as stack:
+        checkpointer = None
+        try:
+            checkpointer = await stack.enter_async_context(async_checkpointer())
+        except Exception:
+            # A missing database must not stop the service from starting: the
+            # extraction endpoint needs no persistence, and readiness reports the
+            # degradation honestly rather than the container crash-looping.
+            logger.exception("Checkpointer unavailable; pipeline endpoints disabled")
+
+        app.state.checkpointer = checkpointer
+        app.state.graph = (
+            build_graph({SCRAPER_KEYWORD: scraper_keyword_agent}, checkpointer=checkpointer)
+            if checkpointer is not None
+            else None
+        )
+        app.state.ready = True
+        logger.info(
+            "AI service ready",
+            extra={
+                "taxonomy_skills": len(matcher.taxonomy),
+                "taxonomy_patterns": matcher.pattern_count,
+                "build_ms": round((time.perf_counter() - started) * 1000, 2),
+                "llm_provider": settings.llm_provider if settings.llm_configured else "mock",
+                "model": settings.gemini_model if settings.llm_configured else "mock",
+                "checkpointer": "postgres" if checkpointer else "unavailable",
+            },
+        )
+        yield
+        app.state.ready = False
+        logger.info("AI service shutting down")
 
 
 app = FastAPI(
@@ -159,6 +182,12 @@ async def ready(request: Request) -> dict[str, Any]:
         "taxonomy_skills": len(matcher.taxonomy),
         "taxonomy_patterns": matcher.pattern_count,
         "llm": settings.gemini_model if settings.llm_configured else "mock (no credentials)",
+        # Reported rather than hidden: without a checkpointer the pipeline
+        # endpoints cannot offer durable sessions, and that is worth surfacing.
+        "checkpointer": "postgres"
+        if getattr(request.app.state, "checkpointer", None)
+        else "unavailable",
+        "pipeline_available": getattr(request.app.state, "graph", None) is not None,
     }
 
 
