@@ -32,8 +32,8 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 13 | Express API gateway | L | 11, 12 | ⬜ |
 | 14 | GitHub profile sync (PAT) | M | 12 | ⬜ |
 | 15 | Next.js frontend flow | L | 13 | ⬜ |
-| 16 | Docker Compose full-stack wiring | M | 11, 13, 15 | ⬜ |
-| 17 | GitHub Actions CI | M | 16 | ⬜ |
+| 16 | Docker Compose full-stack wiring | M | — | ✅ (ai/pg/redis; api+web seams ready) |
+| 17 | GitHub Actions CI | M | 16 | ✅ |
 | 18 | Jenkins pipeline | M | 17 | ⬜ |
 | 19 | Kubernetes on kind | L | 16 | ⬜ |
 | 20 | AWS EC2 deploy + CD + observability | L | 17, 19 | ⬜ |
@@ -321,7 +321,7 @@ Deliberately one focused flow, not a chat clone.
 > hand-written rather than generated wholesale, because the value is in being
 > able to explain every line.
 
-## Part 16 — Docker Compose full-stack wiring ⬜ · M
+## Part 16 — Docker Compose full-stack wiring ✅ · M
 
 **Deliverables**
 - Root `docker-compose.yml`: `web`, `api`, `ai`, `postgres`, `redis`.
@@ -330,13 +330,24 @@ Deliberately one focused flow, not a chat clone.
 - Named volumes; internal network with only `web`/`api` published.
 - Multi-stage builds for `api` and `web`; non-root users everywhere.
 
-**Acceptance**: `docker compose up` from a clean clone yields a working app.
-**Talking point**: image size reduction achieved, and why the AI image is large
-(Chromium + TeX Live) and how the test target avoids paying that cost.
+**Acceptance**: ✅ met for the services that exist. `make up` yields three
+healthy containers; `make smoke` proves /health, /ready, a 401 without the
+internal key, and real keyword extraction over HTTP. Postgres 17.11 and Redis
+are both reachable from inside the `ai` container. `api` and `web` are wired as
+commented seams with their networks and dependencies already decided.
+
+**Pulled forward** ahead of Parts 11-15 so the infra story landed early, which
+also unblocks Part 10 (checkpointing needs a real Postgres).
+
+**Delivered beyond plan**: a `Makefile` with 20 targets, structured JSON logging
+with request-id correlation across app and uvicorn lines, and the minimal
+FastAPI surface (`/health`, `/ready`, `/internal/extract`) needed to make the
+container a real service. Two networks so that `web`, once it exists, cannot
+address `postgres` or `ai` at all.
 
 ---
 
-## Part 17 — GitHub Actions CI ⬜ · M
+## Part 17 — GitHub Actions CI ✅ · M
 
 **Deliverables**
 - `.github/workflows/ci.yml` — path-filtered matrix so touching `services/web`
@@ -347,7 +358,18 @@ Deliberately one focused flow, not a chat clone.
 - Layer caching via `docker/build-push-action` + GHA cache.
 - Branch protection requiring the CI check.
 
-**Acceptance**: a PR runs the full matrix; a tag publishes images to GHCR.
+**Acceptance**: ✅ written and locally verified — `make lint` runs the exact
+gates CI runs (`ruff check`, `ruff format --check`) and passes; the full suite
+passes against real Postgres/Redis containers. Awaiting a GitHub remote to
+execute on.
+
+**Delivered beyond plan**: the built image is **smoke tested** in CI, not merely
+built — the job starts it, polls `/health`, reads `/ready`, and asserts that an
+unauthenticated `POST /internal/extract` returns 401. CI runs with **no**
+`GEMINI_API_KEY` on purpose, so a rotated or rate-limited key can never turn the
+build red; live-API tests skip themselves. `ci-status` aggregates into one
+required check and treats `skipped` as success, so path filters do not fail the
+gate.
 
 ---
 

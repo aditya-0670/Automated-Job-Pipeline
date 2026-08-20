@@ -157,7 +157,9 @@ def test_clean_evaluation_goes_to_human():
 
 def test_blocking_errors_retry_while_budget_remains():
     state = base_state(
-        evaluation={"factual_errors": ["bad"]}, iteration_count=1, max_iterations=3,
+        evaluation={"factual_errors": ["bad"]},
+        iteration_count=1,
+        max_iterations=3,
         refactored_latex="x",
     )
     assert route_after_evaluation(state) == "refactor_again"
@@ -166,7 +168,9 @@ def test_blocking_errors_retry_while_budget_remains():
 def test_exhausted_retries_degrade_to_human_not_failure():
     """Graceful degradation: the user still gets a resume, with warnings."""
     state = base_state(
-        evaluation={"factual_errors": ["bad"]}, iteration_count=3, max_iterations=3,
+        evaluation={"factual_errors": ["bad"]},
+        iteration_count=3,
+        max_iterations=3,
         refactored_latex="x",
     )
     assert route_after_evaluation(state) == "human_review"
@@ -248,8 +252,13 @@ def test_runs_straight_through_without_interrupts():
         config={"configurable": {"thread_id": "t-1"}},
     )
     assert visited == [
-        SCRAPER_KEYWORD, KEYWORD_REVIEW, DATA_RETRIEVER,
-        REFACTORER, EVALUATOR, HUMAN_REVIEW, COMPILE_PDF,
+        SCRAPER_KEYWORD,
+        KEYWORD_REVIEW,
+        DATA_RETRIEVER,
+        REFACTORER,
+        EVALUATOR,
+        HUMAN_REVIEW,
+        COMPILE_PDF,
     ]
     assert final["current_step"] == Step.COMPLETE
 

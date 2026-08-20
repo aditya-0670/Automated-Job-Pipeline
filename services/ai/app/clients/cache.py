@@ -32,7 +32,9 @@ class Cache(ABC):
     async def get(self, key: str) -> dict[str, Any] | None: ...
 
     @abstractmethod
-    async def set(self, key: str, value: dict[str, Any], ttl: int = DEFAULT_TTL_SECONDS) -> None: ...
+    async def set(
+        self, key: str, value: dict[str, Any], ttl: int = DEFAULT_TTL_SECONDS
+    ) -> None: ...
 
 
 class NullCache(Cache):

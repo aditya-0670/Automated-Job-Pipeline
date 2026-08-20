@@ -90,7 +90,7 @@ def test_single_letter_skill_still_matches_when_standalone(matcher):
 
 
 def test_longest_match_wins(matcher):
-    """"spring boot" must not also register the shorter "spring"."""
+    """ "spring boot" must not also register the shorter "spring"."""
     found = matcher.find_skills("Experience with Spring Boot required")
     assert "Spring Boot" in found
     assert "React Native" not in found
@@ -110,11 +110,32 @@ def test_matches_are_equivalent_to_naive_baseline(matcher, taxonomy, jd_text):
 def test_real_jd_finds_expected_skills(matcher, jd_text):
     found = set(matcher.find_skills(jd_text))
     for expected in [
-        "Java", "Python", "PostgreSQL", "Oracle", "Docker", "Kubernetes",
-        "Jenkins", "GitHub Actions", "CI/CD", "Prometheus", "Grafana",
-        "AWS", "GCP", "Azure", "Kafka", "Terraform", "Redis",
-        "Apex", "SOQL", "Lightning Web Components", "Spring Boot", "Hibernate",
-        "REST API", "Distributed Systems", "Agile", "Code Review",
+        "Java",
+        "Python",
+        "PostgreSQL",
+        "Oracle",
+        "Docker",
+        "Kubernetes",
+        "Jenkins",
+        "GitHub Actions",
+        "CI/CD",
+        "Prometheus",
+        "Grafana",
+        "AWS",
+        "GCP",
+        "Azure",
+        "Kafka",
+        "Terraform",
+        "Redis",
+        "Apex",
+        "SOQL",
+        "Lightning Web Components",
+        "Spring Boot",
+        "Hibernate",
+        "REST API",
+        "Distributed Systems",
+        "Agile",
+        "Code Review",
     ]:
         assert expected in found, f"missed {expected}"
 

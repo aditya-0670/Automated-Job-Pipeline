@@ -1,0 +1,29 @@
+# Development overrides. Compose loads this automatically on top of
+# docker-compose.yml; CI and production must pass `-f docker-compose.yml` alone
+# so they never pick it up.
+#
+# What it changes: live source mounting and hot reload, so a code change does
+# not require an image rebuild.
+
+services:
+  ai:
+    build:
+      # The test target skips Chromium and TeX Live, so dev rebuilds are fast.
+      # Scraping Tier 2 and PDF compilation are unavailable in this mode.
+      target: test
+    volumes:
+      # `:z` relabels for SELinux (Fedora). Without it the container gets
+      # PermissionError on every file in /app.
+      - ./services/ai:/app:z
+      - ai_output:/app/out
+    environment:
+      LOG_LEVEL: DEBUG
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --reload
+    healthcheck:
+      # Fast startup without the browser/LaTeX payload.
+      start_period: 10s

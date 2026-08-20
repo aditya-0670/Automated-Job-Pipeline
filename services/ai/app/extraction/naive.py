@@ -12,7 +12,7 @@ algorithm that returns different results is not a valid optimisation, and
 
 from __future__ import annotations
 
-from app.extraction.aho import SkillMatch, TaxonomyMatcher, _WORD_CHARS
+from app.extraction.aho import _WORD_CHARS, SkillMatch, TaxonomyMatcher
 
 
 def naive_find_all(text: str, taxonomy: dict[str, dict]) -> list[SkillMatch]:

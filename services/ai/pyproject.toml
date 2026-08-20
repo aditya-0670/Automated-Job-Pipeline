@@ -1,0 +1,35 @@
+# Tooling config only -- dependencies live in requirements*.txt, which is what
+# the Dockerfile installs. Two sources of truth for dependencies would drift.
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = [".venv", "__pycache__"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # import sorting
+    "UP",   # pyupgrade -- keep modern syntax
+    "B",    # bugbear -- likely bugs
+    "C4",   # comprehension clarity
+    "SIM",  # simplification
+    "RUF",  # ruff's own rules
+]
+ignore = [
+    "B008",  # FastAPI's Depends() in defaults is the documented pattern
+    "E501",  # line length is enforced by the formatter, not the linter
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests deliberately reach for private helpers to assert internal invariants,
+# and re-import inside functions to exercise import-time behaviour.
+"tests/*" = ["SLF001", "PLR2004"]
+# The naive baseline intentionally mirrors private matcher internals.
+"app/extraction/naive.py" = ["SLF001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

@@ -17,7 +17,8 @@ invented facts.
 | 04 | [**Code Map**](./04-code-map.md) | Every file: what it implements and why | authoritative |
 | 05 | [Keyword Extraction Deep Dive](./05-keyword-extraction.md) | The 4-layer pipeline, the Aho-Corasick implementation, and the measured benchmarks | implemented ✅ |
 | 06 | [**Build Plan**](./06-build-plan.md) | The 20 parts, with deliverables, dependencies and acceptance criteria | working plan |
-| 07 | [Decision Log](./07-decision-log.md) | ADRs: monorepo, no Kafka, Gemini, deterministic guardrails, dev auth | authoritative |
+| 07 | [Decision Log](./07-decision-log.md) | ADRs: monorepo, no Kafka, Gemini, deterministic guardrails, dev auth, model pinning, thinking tokens | authoritative |
+| 08 | [**Infrastructure**](./08-infrastructure.md) | Docker image strategy, Compose topology, health vs readiness, CI design | implemented ✅ |
 
 Also: [`../resume-defend.md`](../resume-defend.md) — interview prep for the three
 resume bullets, kept at the repo root.
@@ -34,14 +35,18 @@ able to explain.
 
 ## Current state (2026-08-20)
 
-**Part 1 of 20 complete.** The deterministic keyword extraction layer is built
-and tested — 39 tests green in a container, with the Aho-Corasick automaton
-measured at 2.8ms per posting against a naive baseline's 9.5ms, and flat as the
-pattern set grows. See [06-build-plan.md](./06-build-plan.md) for the full board.
+**Parts 1, 2, 3, 16, 17 of 20 complete.** 117 tests green.
 
-Next: the LangGraph pipeline (Parts 2-11), then the application services
-(12-15), then infrastructure — Docker Compose, GitHub Actions, Jenkins,
-Kubernetes, AWS (16-20).
+- **1** — deterministic extraction: 148 skills / 489 patterns, 2.8ms per posting
+  vs a naive baseline's 9.5ms, and flat as the pattern set grows.
+- **2, 3** — the LangGraph graph with both durable interrupts, the bounded
+  self-correction loop, and Node 1 (scrape → extract) wired in.
+- **16, 17** — pulled forward: a working Compose stack (`make up`, `make smoke`)
+  and GitHub Actions CI with path filtering and an image smoke test.
+
+Next: Part 10 (PostgresSaver checkpointing — now unblocked by a real Postgres),
+then Parts 4-9 to complete the pipeline, then 11-15 for the HTTP surface and
+application services, then 18-20 for Jenkins, Kubernetes and AWS.
 
 ---
 
@@ -51,13 +56,17 @@ Kubernetes, AWS (16-20).
 cp .env.example .env          # then set GEMINI_API_KEY (optional — a
                               # deterministic mock provider runs without it)
 
-# AI service tests and benchmarks (the only runnable part today)
-cd services/ai
-docker build --target test -t resumeforge-ai:test .
-docker run --rm resumeforge-ai:test pytest tests/ -s
+make build-test    # build the fast test image (no Chromium/TeX Live)
+make test          # 117 tests
+make bench         # the Aho-Corasick benchmark tables
+make lint          # the exact gates CI runs
+
+make up            # start postgres + redis + ai
+make smoke         # exercise the running stack over HTTP
+make down          # stop
 ```
 
-Full-stack `docker compose up` arrives in Part 16.
+`make help` lists every target.
 
 ---
 

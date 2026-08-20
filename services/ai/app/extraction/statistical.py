@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 # Minimal English stoplist. RAKE only needs it to find phrase boundaries, so
 # precision here matters far less than it would for a scoring model.
+# ruff: noqa: SIM905 -- a prose blob is materially easier to read and extend
+# than ~200 individually quoted strings, and .split() runs once at import.
 _STOPWORDS: frozenset[str] = frozenset(
     """
 a about above after again against all am an and any are as at be because been

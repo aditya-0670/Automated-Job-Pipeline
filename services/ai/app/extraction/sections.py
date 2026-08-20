@@ -27,28 +27,48 @@ SECTION_WEIGHTS: dict[str, float] = {
 }
 
 _HEADING_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("requirements", re.compile(
-        r"^\s*(?:#+\s*)?(?:minimum\s+|basic\s+|required\s+)?"
-        r"(?:qualifications?|requirements?|what you(?:'| a)?ll need|must[- ]haves?|"
-        r"skills?\s*(?:&|and)?\s*(?:experience)?|who you are)\s*:?\s*$",
-        re.I | re.M)),
-    ("responsibilities", re.compile(
-        r"^\s*(?:#+\s*)?(?:key\s+|core\s+)?"
-        r"(?:responsibilities|what you(?:'| wi)?ll do|the role|role overview|"
-        r"your impact|day[- ]to[- ]day|duties)\s*:?\s*$",
-        re.I | re.M)),
-    ("preferred", re.compile(
-        r"^\s*(?:#+\s*)?(?:preferred\s+qualifications?|nice[- ]to[- ]haves?|"
-        r"bonus(?:\s+points)?|good to have|desirable|pluses?)\s*:?\s*$",
-        re.I | re.M)),
-    ("benefits", re.compile(
-        r"^\s*(?:#+\s*)?(?:benefits?|perks?|what we offer|compensation|"
-        r"salary|equal opportunity|eeo)\s*:?\s*$",
-        re.I | re.M)),
-    ("about", re.compile(
-        r"^\s*(?:#+\s*)?(?:about (?:us|the company|\w+)|who we are|our mission|"
-        r"company overview)\s*:?\s*$",
-        re.I | re.M)),
+    (
+        "requirements",
+        re.compile(
+            r"^\s*(?:#+\s*)?(?:minimum\s+|basic\s+|required\s+)?"
+            r"(?:qualifications?|requirements?|what you(?:'| a)?ll need|must[- ]haves?|"
+            r"skills?\s*(?:&|and)?\s*(?:experience)?|who you are)\s*:?\s*$",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "responsibilities",
+        re.compile(
+            r"^\s*(?:#+\s*)?(?:key\s+|core\s+)?"
+            r"(?:responsibilities|what you(?:'| wi)?ll do|the role|role overview|"
+            r"your impact|day[- ]to[- ]day|duties)\s*:?\s*$",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "preferred",
+        re.compile(
+            r"^\s*(?:#+\s*)?(?:preferred\s+qualifications?|nice[- ]to[- ]haves?|"
+            r"bonus(?:\s+points)?|good to have|desirable|pluses?)\s*:?\s*$",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "benefits",
+        re.compile(
+            r"^\s*(?:#+\s*)?(?:benefits?|perks?|what we offer|compensation|"
+            r"salary|equal opportunity|eeo)\s*:?\s*$",
+            re.I | re.M,
+        ),
+    ),
+    (
+        "about",
+        re.compile(
+            r"^\s*(?:#+\s*)?(?:about (?:us|the company|\w+)|who we are|our mission|"
+            r"company overview)\s*:?\s*$",
+            re.I | re.M,
+        ),
+    ),
 ]
 
 

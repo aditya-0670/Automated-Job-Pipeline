@@ -112,8 +112,11 @@ def test_scaling_curve_as_taxonomy_grows(taxonomy, long_jd):
             padded[f"__SyntheticSkill{i}__"] = {"category": "synthetic", "aliases": []}
 
         matcher = TaxonomyMatcher(padded)
-        aho_ms = _time(lambda: matcher.find_skills(long_jd), iterations=10)
-        naive_ms = _time(lambda: naive_find_skills(long_jd, padded), iterations=10)
+        # Loop variables are bound as defaults rather than captured: correct as
+        # written only because _time() invokes immediately, and a trap the moment
+        # anything defers the call.
+        aho_ms = _time(lambda m=matcher: m.find_skills(long_jd), iterations=10)
+        naive_ms = _time(lambda t=padded: naive_find_skills(long_jd, t), iterations=10)
         rows.append((matcher.pattern_count, aho_ms, naive_ms))
 
     header = f"\n{'patterns':>10} {'aho (ms)':>10} {'naive (ms)':>12} {'speedup':>9}"

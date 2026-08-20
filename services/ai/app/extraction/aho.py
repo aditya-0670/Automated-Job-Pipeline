@@ -132,11 +132,9 @@ class TaxonomyMatcher:
         Kept as the readable reference form; `find_all` inlines this logic on
         its hot path, and the naive baseline calls it directly.
         """
-        if start > 0 and text[start - 1] in _WORD_CHARS:
-            return False
-        if end < len(text) and text[end] in _WORD_CHARS:
-            return False
-        return True
+        left_free = start == 0 or text[start - 1] not in _WORD_CHARS
+        right_free = end == len(text) or text[end] not in _WORD_CHARS
+        return left_free and right_free
 
     @staticmethod
     def _keep_longest(

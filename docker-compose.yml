@@ -1,0 +1,134 @@
+# ResumeForge — full stack.
+#
+# Current services: postgres, redis, ai. The api and web services land with
+# Parts 13 and 15; their placeholders are commented at the bottom of this file
+# with the wiring already decided, so adding them is not a redesign.
+#
+#   docker compose up -d          start
+#   docker compose ps             health status
+#   docker compose logs -f ai     follow the AI service
+#   docker compose down -v        stop and delete volumes
+#
+# Design notes worth defending:
+#   * Only the gateway-facing ports are published. `ai` binds to the internal
+#     network only -- it is reachable by `api`, not by the host or the browser.
+#     (Until `api` exists, AI_PUBLISH_PORT can expose it for development.)
+#   * Every service has a healthcheck, and dependants wait for
+#     `condition: service_healthy` rather than `service_started`. Postgres
+#     accepting TCP is not the same as Postgres being ready to serve.
+#   * Named volumes, not bind mounts, for data. A bind mount for Postgres on
+#     SELinux hosts fails in confusing ways.
+
+name: resumeforge
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resumeforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-resumeforge}
+      POSTGRES_DB: ${POSTGRES_DB:-resumeforge}
+      # Faster, deterministic collation for a dev database.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      # -d and -U are required: without them pg_isready checks the default
+      # database and reports healthy while ours is still being created.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resumeforge} -d ${POSTGRES_DB:-resumeforge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [backend]
+    # Published for local psql access and Prisma migrations from the host.
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5432}:5432"
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    # No persistence: everything in Redis here is a cache or a rate-limit
+    # counter. Losing it costs a re-scrape, so an AOF would be pure overhead.
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks: [backend]
+
+  ai:
+    build:
+      context: ./services/ai
+      target: runtime
+    image: resumeforge-ai:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-resumeforge}:${POSTGRES_PASSWORD:-resumeforge}@postgres:5432/${POSTGRES_DB:-resumeforge}
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY must be set}
+      LLM_PROVIDER: ${LLM_PROVIDER:-gemini}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.7-flash}
+      LLM_THINKING_BUDGET: ${LLM_THINKING_BUDGET:-512}
+      LLM_MAX_OUTPUT_TOKENS: ${LLM_MAX_OUTPUT_TOKENS:-16384}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # Generated PDFs. A named volume so output survives a container rebuild.
+      - ai_output:/app/out
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      # Chromium and TeX Live make startup slow; a short start_period would
+      # restart-loop a service that was going to become healthy.
+      start_period: 40s
+      retries: 5
+    networks: [backend]
+    # NOT published by default: `api` is the only legitimate caller. Set
+    # AI_PUBLISH_PORT=8000 in .env to reach it directly while `api` is unbuilt.
+    ports:
+      - "${AI_PUBLISH_PORT:-8000}:8000"
+    security_opt:
+      - no-new-privileges:true
+
+  # ── Part 13 ───────────────────────────────────────────────────────────
+  # api:
+  #   build: { context: ./services/api }
+  #   environment:
+  #     DATABASE_URL: postgresql://...@postgres:5432/...
+  #     AI_SERVICE_URL: http://ai:8000
+  #     INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+  #     JWT_SECRET: ${JWT_SECRET}
+  #   depends_on:
+  #     ai: { condition: service_healthy }
+  #   ports: ["4000:4000"]
+  #   networks: [backend, frontend]
+  #
+  # ── Part 15 ───────────────────────────────────────────────────────────
+  # web:
+  #   build: { context: ./services/web }
+  #   environment:
+  #     NEXT_PUBLIC_API_URL: http://localhost:4000
+  #   depends_on: [api]
+  #   ports: ["3000:3000"]
+  #   networks: [frontend]
+
+networks:
+  # Two networks so that, once `web` exists, it can reach `api` without being
+  # able to address `postgres` or `ai` at all.
+  backend:
+    driver: bridge
+  frontend:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  ai_output:
