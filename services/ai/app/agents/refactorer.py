@@ -22,7 +22,6 @@ import re
 from typing import Any
 
 from app.clients.llm import LLMError, LLMProvider, TokenLedger, get_llm
-from app.config import get_settings
 from app.graph.events import step_event
 from app.graph.state import ResumeForgeState
 from app.graph.steps import Step
@@ -32,6 +31,8 @@ from app.prompts.refactor import (
     SYSTEM_PROMPT,
     build_correction_prompt,
     build_refactor_prompt,
+    parse_response,
+    reassemble,
 )
 
 logger = logging.getLogger(__name__)
@@ -79,7 +80,6 @@ async def refactorer_agent(
     llm: LLMProvider | None = None,
 ) -> dict[str, Any]:
     """Rewrite the resume, or correct a previous attempt."""
-    settings = get_settings()
     llm = llm or get_llm()
 
     user_latex = state.get("user_latex") or ""
@@ -113,6 +113,7 @@ async def refactorer_agent(
                 evaluation=evaluation,
                 matched_evidence=used_evidence,
                 unsupported_keywords=unsupported,
+                user_latex=user_latex,
             )
             if user_request:
                 # A user instruction is a requirement, not a suggestion, so it
@@ -149,8 +150,10 @@ async def refactorer_agent(
     )
 
     # ── Call the model ──
+    # Plain completion, not JSON mode: the response is delimiter-framed because
+    # LaTeX inside a JSON string is escape-hostile (see app/prompts/refactor.py).
     try:
-        payload, response = await llm.complete_json(system=system, user=prompt)
+        response = await llm.complete(system=system, user=prompt)
     except LLMError as exc:
         # Not fatal on a correction pass: the previous output still exists and is
         # better than nothing, so degrade to review with a warning.
@@ -165,19 +168,18 @@ async def refactorer_agent(
             }
         return _failure(state, f"The resume could not be generated: {exc}")
 
-    latex = (payload.get("latex") or "").strip()
-    if not latex:
-        return _failure(state, "The model returned no LaTeX document.")
+    body, changelog = parse_response(response.text)
+    if not body:
+        return _failure(state, "The model returned no resume content.")
 
-    latex = _unescape_if_needed(latex)
+    body = _unescape_if_needed(body)
+    # The template guarantee: the preamble comes from the user's own file, so no
+    # model output can alter their fonts, margins, colours or macros.
+    latex = reassemble(user_latex, body)
 
     ledger = TokenLedger()
     ledger.entries = list((state.get("token_ledger") or {}).get("by_step") or [])
     ledger.record("refactor_correction" if correcting else "refactor", response)
-
-    changelog = payload.get("changelog") or []
-    if not isinstance(changelog, list):
-        changelog = []
 
     logger.info(
         "Refactored: %d chars, %d changelog entries, %d in / %d out / %d thinking tokens",
@@ -224,14 +226,14 @@ async def refactorer_agent(
 def _unescape_if_needed(latex: str) -> str:
     r"""Repair LaTeX that survived a JSON round trip badly.
 
-    Models sometimes emit `\\documentclass` where `\documentclass` was meant --
-    correct JSON escaping applied twice. Detected by the absence of any real
-    control sequence alongside the presence of doubled backslashes.
+    Models sometimes emit `\\section` where `\section` was meant -- correct JSON
+    escaping applied twice. Detected by doubled backslashes appearing before a
+    known control word; checking for the single-backslash form first would always
+    match, since it is a substring of the doubled form.
     """
-    # Order matters: "\documentclass" is a substring of "\\documentclass", so
-    # checking for the single-backslash form first would always match and the
-    # repair would never run. Check the doubled form first.
-    if r"\\documentclass" in latex or r"\\begin{document}" in latex:
+    doubled = sum(latex.count("\\\\" + word) for word in ("section", "begin", "item", "textbf"))
+    single = sum(latex.count("\\" + word) for word in ("section", "begin", "item", "textbf"))
+    if doubled and doubled >= single - doubled:
         logger.warning("Model double-escaped the LaTeX; unescaping")
         return latex.replace("\\\\", "\\")
     return latex

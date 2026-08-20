@@ -327,17 +327,19 @@ class GeminiProvider(LLMProvider):
             finish_reason=finish_reason,
         )
 
+        # Truncation must be detected whether or not text came back. An earlier
+        # version only checked for EMPTY text, so a response cut off mid-JSON
+        # surfaced as an unhelpful "did not return parseable JSON" instead of
+        # naming the real cause.
+        if finish_reason == "MAX_TOKENS":
+            raise LLMTruncatedError(
+                f"Model {model} hit max_output_tokens "
+                f"({settings.llm_max_output_tokens}) after "
+                f"{result.thinking_tokens} thinking and {result.output_tokens} "
+                f"output tokens. The response is incomplete."
+            )
+
         if not result.text.strip():
-            # With thinking models an exhausted output budget yields reasoning
-            # tokens and no text at all. Say so plainly rather than letting an
-            # empty string flow downstream.
-            if finish_reason == "MAX_TOKENS":
-                raise LLMTruncatedError(
-                    f"Model hit max_output_tokens ({settings.llm_max_output_tokens}) "
-                    f"after {result.thinking_tokens} thinking tokens without "
-                    f"producing text. Raise LLM_MAX_OUTPUT_TOKENS or lower "
-                    f"LLM_THINKING_BUDGET."
-                )
             raise LLMTransientError(f"Model returned no text (finish_reason={finish_reason})")
 
         return result
@@ -406,21 +408,16 @@ class MockProvider(LLMProvider):
         latex = _extract_latex_block(user)
         if latex:
             annotated = f"% ResumeForge (mock provider -- no LLM configured)\n{latex}"
-            if json_mode or "resume editor" in role:
-                return json.dumps(
-                    {
-                        "latex": annotated,
-                        "changelog": [
-                            {
-                                "section": "Summary",
-                                "change_type": "reworded",
-                                "before": "(mock)",
-                                "after": "(mock)",
-                                "reason": "MockProvider: no LLM configured",
-                            }
-                        ],
-                    }
+            if "resume editor" in role:
+                # Delimiter-framed, matching the real refactor contract.
+                return (
+                    "===BODY===\n"
+                    + _extract_body(annotated)
+                    + "\n===CHANGELOG===\n"
+                    + "Summary | reworded | (mock) | MockProvider: no LLM configured\n"
                 )
+            if json_mode:
+                return json.dumps({"body": _extract_body(annotated)})
             return annotated
 
         if json_mode or "json" in lowered:
@@ -429,8 +426,31 @@ class MockProvider(LLMProvider):
 
 
 def _extract_latex_block(text: str) -> str | None:
+    """Find a full document, or failing that a document body, in a prompt.
+
+    The refactor prompt now sends the body only, so the mock has to recognise
+    both shapes or it cannot answer a refactor request at all.
+    """
     match = re.search(r"\\documentclass.*?\\end\{document\}", text, re.S)
-    return match.group(0) if match else None
+    if match:
+        return match.group(0)
+    marker = "CURRENT RESUME BODY"
+    if marker in text:
+        return text.split(marker, 1)[1].split("Rewrite the body", 1)[0].strip() or None
+    marker = "YOUR PREVIOUS OUTPUT"
+    if marker in text:
+        return text.split(marker, 1)[1].split("Return the JSON", 1)[0].strip() or None
+    return None
+
+
+def _extract_body(latex: str) -> str:
+    """Strip the document wrapper if one is present."""
+    start_marker, end_marker = "\\begin{document}", "\\end{document}"
+    start = latex.find(start_marker)
+    end = latex.rfind(end_marker)
+    if start == -1 or end == -1 or end < start:
+        return latex.strip()
+    return latex[start + len(start_marker) : end].strip()
 
 
 def get_llm() -> LLMProvider:

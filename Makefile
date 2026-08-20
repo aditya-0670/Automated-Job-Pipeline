@@ -134,3 +134,10 @@ smoke: ## Hit the running stack the way CI does
 		-d "$$(python3 -c 'import json,pathlib; print(json.dumps({"job_text": pathlib.Path("services/ai/tests/fixtures/sample_jd.txt").read_text(), "max_keywords": 8}))')" \
 		localhost:8000/internal/extract \
 		| python3 -m json.tool | head -40
+
+.PHONY: demo
+demo: ## Run the full pipeline end-to-end on the real resume (needs GEMINI_API_KEY)
+	@mkdir -p out && chmod 777 out
+	docker run --rm --env-file .env \
+		-v "$(PWD)/$(AI_DIR)":/app:z -v "$(PWD)/out":/out:z \
+		resumeforge-ai:runtime-test python demo/e2e.py

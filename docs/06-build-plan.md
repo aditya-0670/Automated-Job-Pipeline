@@ -22,8 +22,8 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 3 | Node 1 — Scraper & Keyword agent | S | 1, 2 | ✅ |
 | 4 | Node 2 — Data Retriever agent | L | 2 | ✅ |
 | 5 | Node 3 — Resume Refactorer agent | L | 2, 4 | ✅ |
-| 6 | Node 4 — Evaluator agent + guardrails | L | 5 | ⬜ |
-| 7 | Self-correction loop + routing | M | 5, 6 | ⬜ |
+| 6 | Node 4 — Evaluator agent + guardrails | L | 5 | ✅ |
+| 7 | Self-correction loop + routing | M | 5, 6 | ✅ |
 | 8 | Node 5 — Human review interrupt | M | 7 | ⬜ |
 | 9 | Node 6 — LaTeX → PDF compilation | M | 2 | ✅ |
 | 10 | PostgresSaver checkpointing | M | 2 | ✅ |
@@ -170,7 +170,7 @@ double-escaped LaTeX from JSON round-trips.
 
 ---
 
-## Part 6 — Node 4: Evaluator agent + guardrails ⬜ · L
+## Part 6 — Node 4: Evaluator agent + guardrails ✅ · L
 
 The quality gate, and the thing that makes "fault-tolerant" true.
 
@@ -187,12 +187,21 @@ The quality gate, and the thing that makes "fault-tolerant" true.
   coverage.
 - Structured verdict: `{passed, factual_errors[], structural_errors[], feedback}`.
 
-**Acceptance**: a deliberately hallucinated LaTeX fixture (claims Kubernetes with
-no evidence) is caught by the *deterministic* checker with no LLM call.
+**Acceptance**: ✅ met, and asserted directly — a hallucinated fixture is caught
+with `provider.calls == 0`. 31 guardrail tests plus 22 node tests. An inflated
+metric (500+ → 800+) is caught exactly; an implied skill (Kafka evidencing
+"message queue") is correctly accepted; the real resume passes against its own
+profile.
+
+**Delivered beyond plan**: the LLM quality pass is skipped entirely when rules
+already found a blocking error — the output is about to be regenerated, so
+spending tokens on its tone is waste. A failed quality review never fails the
+pipeline, because the deterministic checks already established the resume is
+sound.
 
 ---
 
-## Part 7 — Self-correction loop + routing ⬜ · M
+## Part 7 — Self-correction loop + routing ✅ · M
 
 **Interview-critical — this is resume bullet 2's "retry handling".**
 
@@ -205,9 +214,14 @@ no evidence) is caught by the *deterministic* checker with no LLM call.
 - Token accounting proving the targeted retry costs a fraction of a full
   regeneration.
 
-**Acceptance**: a test forces two failed evaluations and asserts the loop runs
-exactly twice then proceeds; a test forces permanent failure and asserts it
-degrades to human review at `max_iterations` rather than looping.
+**Acceptance**: ✅ met. 8 integration tests drive the real Evaluator through the
+real graph: one retry on a hallucination then pass, the retry receiving the
+specific errors *and* its own prior output, a permanently failing model stopping
+exactly at the cap, and graceful degradation to review with the unresolved issues
+attached.
+
+**Key measured property**: detection costs **zero tokens** — only the *fix* costs
+a model call, which is what makes bounded retries affordable.
 
 ---
 

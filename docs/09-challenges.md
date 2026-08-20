@@ -24,6 +24,8 @@ The strongest three, if you only memorise three:
 | **4** | [A silent taxonomy ambiguity](#challenge-4--a-silently-wrong-automaton-ambiguous-taxonomy-patterns) | Shows a test caught a *correctness* bug that produced no error |
 | **11** | [Chromium the image contained but could not run](#challenge-11--the-image-contained-chromium-and-could-not-launch-it) | Shows you understand containers, users, and why test coverage had a structural blind spot |
 | **18** | [Designing around a 20-request-per-day quota](#challenge-18--the-free-tier-is-20-requests-per-day) | Shows you read the error payload, honour server directives, and design a fallback |
+| **22** | [LaTeX inside JSON is escape-hostile](#challenge-22--latex-inside-json-is-escape-hostile) | An intermittent bug whose root cause is a genuine format incompatibility, where half the failures are silent |
+| **23** | [Never let the model hold the preamble](#challenge-23--asking-for-the-whole-document-when-the-preamble-was-the-part-that-mattered) | Turning a behaviour you have to verify into a property that cannot fail |
 
 ---
 ---
@@ -561,6 +563,103 @@ are both impossible.
 caching and change-detection actually want, and it is paired with a test proving
 the hash still *changes* when content changes — a lenient hash that never differs
 would be worse than none.
+
+
+## Challenge 22 — LaTeX inside JSON is escape-hostile
+
+**This is the best "why did you change your design" story in the project.**
+
+**Symptom.** Generation failed intermittently with
+`Model did not return parseable JSON`. Sometimes the identical prompt worked.
+Re-running the same call by hand succeeded, which is the worst kind of bug
+report.
+
+**Root cause.** LaTeX and JSON both use the backslash as their escape character.
+To put `\section` inside a JSON string a model must emit `\\section`, and models
+get that wrong often enough to fail at random on a document containing hundreds
+of control sequences.
+
+**The part that makes it dangerous rather than merely annoying:** the failure
+mode is not uniform.
+
+| LaTeX | As a JSON escape | Result |
+|---|---|---|
+| `\begin` | `\b` is **valid** — backspace | Parses cleanly into **corrupted** LaTeX |
+| `\faIcon` | `\f` is **valid** — form feed | Parses cleanly into **corrupted** LaTeX |
+| `\vspace` | `\v` is **not** valid JSON | Raises, loudly |
+| `\section` | `\s` is **not** valid JSON | Raises, loudly |
+
+So roughly half the mistakes throw an error, and the other half **succeed and
+silently produce a broken document**. A pipeline that only handled the loud half
+would have shipped corrupted resumes.
+
+**Fix.** Drop JSON as the envelope. The response is delimiter-framed:
+
+```
+===BODY===
+\section{Summary} ... raw LaTeX, no escaping at all ...
+===CHANGELOG===
+Experience | reworded | Led with Docker work | Posting requires Docker; evidence item 1
+```
+
+LaTeX now needs no escaping, so the entire failure class disappears. The
+changelog is pipe-delimited for the same reason. A JSON parser is kept as a
+fallback for models that ignore the format instruction.
+
+**The line to say:** *"JSON was the wrong envelope. Not because it's slow or
+verbose — because JSON and LaTeX share an escape character, and half the possible
+mistakes parse successfully into corrupted output. I switched to delimiter
+framing so the content needs no escaping at all."*
+
+---
+
+## Challenge 23 — Asking for the whole document, when the preamble was the part that mattered
+
+**Symptom.** The refactorer originally asked the model to return the complete
+LaTeX document. Two problems followed:
+
+1. **Cost.** The preamble is 27% of the file — 12 `\usepackage` lines, 10 custom
+   macro definitions, colour and spacing setup — regenerated on every call and on
+   every self-correction retry, for no benefit.
+2. **Risk.** The prompt had to *ask* the model not to alter it, and asking is not
+   guaranteeing. A fallback model also truncated mid-document on it.
+
+**Fix.** The model never sees the preamble and never returns it. It receives a
+*list* of the macros it may use (286 characters instead of the full preamble) and
+returns the body only, which is reassembled onto the user's original preamble
+taken verbatim from their file.
+
+**Why this is the interesting kind of fix.** Preserving the preamble stopped
+being a behaviour to verify and became a property of the architecture. The
+structural guardrail still checks it — defence in depth — but it now cannot fail,
+because the bytes come from the user's own file. Measured on the real resume:
+27% fewer output characters per generation, and preamble corruption is
+*impossible* rather than *unlikely*.
+
+**The line to say:** *"The best way to stop a model breaking something is to
+never let it hold that something in the first place."*
+
+---
+
+## Challenge 24 — Truncation detected only when it was total
+
+**Symptom.** A truncated response surfaced as
+`Model did not return parseable JSON` — a misleading message pointing at the
+parser rather than the cause.
+
+**Root cause.** The code raised `LLMTruncatedError` only when
+`finish_reason == "MAX_TOKENS"` **and** the text was empty. That condition came
+from a real observation — on thinking models an exhausted budget often yields
+reasoning tokens and no text — but it was too narrow. A response cut off *partway*
+has text and hits the same limit.
+
+**Fix.** Check `finish_reason` first, regardless of whether text arrived, and
+report the model, the limit, and the thinking/output split so the fix is obvious
+from the message alone.
+
+**The lesson:** the original condition encoded a *specific observed symptom*
+rather than the *underlying rule*. `finish_reason == MAX_TOKENS` means the
+response is incomplete — whether or not anything came back is a separate fact.
 
 ---
 ---

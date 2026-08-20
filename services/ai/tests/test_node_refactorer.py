@@ -71,8 +71,12 @@ class ScriptedProvider(LLMProvider):
 
 
 def valid_payload(latex: str = RESUME) -> dict:
+    from app.prompts.refactor import extract_body
+
     return {
-        "latex": latex,
+        # The model returns the body only; the preamble is reattached from the
+        # user's own file, which is what makes the template guarantee structural.
+        "body": extract_body(latex),
         "changelog": [
             {
                 "section": "Experience",
@@ -89,9 +93,7 @@ def valid_payload(latex: str = RESUME) -> dict:
 def test_budget_truncates_from_the_least_relevant_end():
     """Evidence arrives ranked, so the tail is the right thing to drop."""
     evidence = [{"title": f"item {i}", "text": "x" * 4000, "kind": "project"} for i in range(20)]
-    prompt, used, truncated = fit_evidence_to_budget(
-        lambda ev: "".join(e["text"] for e in ev), evidence
-    )
+    _, used, truncated = fit_evidence_to_budget(lambda ev: "".join(e["text"] for e in ev), evidence)
     assert truncated
     assert len(used) < len(evidence)
     assert used[0]["title"] == "item 0", "the most relevant item must be kept"
@@ -164,11 +166,43 @@ async def test_token_ledger_accumulates(matched_state):
 
 async def test_double_escaped_latex_is_repaired(matched_state):
     """Models sometimes apply JSON escaping twice."""
-    provider = ScriptedProvider(valid_payload(RESUME.replace("\\", "\\\\")))
-    result = await refactorer_agent(matched_state, llm=provider)
+    from app.prompts.refactor import extract_body
+
+    doubled = extract_body(RESUME).replace("\\", "\\\\")
+    result = await refactorer_agent(matched_state, llm=ScriptedProvider({"body": doubled}))
     latex = result["refactored_latex"]
-    assert r"\documentclass" in latex
-    assert r"\\documentclass" not in latex, "double escaping was not repaired"
+    assert r"\section" in latex
+    assert r"\\section" not in latex, "double escaping was not repaired"
+
+
+async def test_preamble_is_taken_from_the_user_file_not_the_model(matched_state):
+    r"""The template guarantee is structural: even a model that returns a body
+    full of \usepackage lines cannot change the real preamble."""
+    hostile = r"\usepackage{moderncv}" + "\n" + r"\section{Summary} hi"
+    result = await refactorer_agent(matched_state, llm=ScriptedProvider({"body": hostile}))
+    latex = result["refactored_latex"]
+    original_preamble = RESUME.split(r"\begin{document}")[0]
+    assert latex.startswith(original_preamble), "the user's preamble was not preserved verbatim"
+    assert latex.count(r"\begin{document}") == 1
+    assert latex.count(r"\end{document}") == 1
+
+
+async def test_model_output_wrapper_is_stripped(matched_state):
+    r"""Models include \begin{document} despite being told not to."""
+    from app.prompts.refactor import extract_body
+
+    wrapped = r"\begin{document}" + extract_body(RESUME) + r"\end{document}"
+    result = await refactorer_agent(matched_state, llm=ScriptedProvider({"body": wrapped}))
+    assert result["refactored_latex"].count(r"\begin{document}") == 1
+
+
+async def test_prompt_sends_a_macro_list_not_the_preamble(matched_state):
+    """Cheaper in input tokens, and it removes the temptation to redefine a macro."""
+    provider = ScriptedProvider(valid_payload())
+    await refactorer_agent(matched_state, llm=provider)
+    sent = provider.calls[0]["user"]
+    assert "resumeSubheading" in sent, "the macro list should be present"
+    assert r"\usepackage{fontawesome5}" not in sent, "the preamble should not be sent"
 
 
 async def test_mock_provider_returns_compilable_latex(matched_state):
@@ -253,7 +287,7 @@ async def test_provider_failure_during_correction_degrades_gracefully(matched_st
 
 
 async def test_empty_latex_response_is_rejected(matched_state):
-    provider = ScriptedProvider({"latex": "   ", "changelog": []})
+    provider = ScriptedProvider({"body": "   ", "changelog": []})
     result = await refactorer_agent(matched_state, llm=provider)
     assert result["current_step"] == Step.FAILED.value
 
