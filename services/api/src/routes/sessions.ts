@@ -23,6 +23,7 @@ import { rateLimit } from "../middleware/rateLimit.js";
 import { pathParam, validate } from "../middleware/validate.js";
 import { PROFILE_INCLUDE, toAiProfile, type ProfileRows } from "../profile.js";
 import { logger } from "../logger.js";
+import { recordStream } from "../metrics.js";
 
 import type { AiClient } from "../services/aiClient.js";
 import type { PrismaClient } from "@prisma/client";
@@ -244,7 +245,13 @@ export function sessionsRouter({ prisma, redis, aiClient }: SessionDeps): Router
       // point: without it, every closed tab leaks a connection and a Postgres
       // poll on the AI service for as long as its stream cap allows.
       const upstream = new AbortController();
-      req.on("close", () => upstream.abort());
+      recordStream("opened");
+      req.on("close", () => {
+        upstream.abort();
+        // Paired with "opened" so a growing gap between the two is visible: that
+        // gap is leaked upstream connections and Postgres polls.
+        recordStream("closed");
+      });
 
       // The header is what a reconnecting EventSource sends by itself; the query
       // parameter is how a client that opens a *new* stream says where it got

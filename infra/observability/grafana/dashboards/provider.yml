@@ -1,0 +1,12 @@
+apiVersion: 1
+providers:
+  - name: resumeforge
+    orgId: 1
+    folder: ResumeForge
+    type: file
+    disableDeletion: true
+    # Dashboards are files in this repository. Editing one in the UI is a change
+    # that disappears on the next restart, which is the intended pressure.
+    allowUiUpdates: false
+    options:
+      path: /etc/grafana/provisioning/dashboards

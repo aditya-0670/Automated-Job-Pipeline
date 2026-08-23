@@ -1,0 +1,56 @@
+# Caddy, chosen over nginx for one reason: it obtains and renews TLS
+# certificates itself. nginx plus certbot plus a renewal timer is three moving
+# parts to do what this does in one line, and the failure mode of a forgotten
+# renewal is a site that goes down in ninety days.
+#
+# Replace the domain, or set DOMAIN in the environment -- Caddy will not issue a
+# certificate for an IP address, so an IP-only deployment must use :80.
+
+{$DOMAIN:localhost} {
+	encode gzip
+
+	# The metrics endpoint is not for the internet. It reports session counts and
+	# token spend, and the gateway serves it unauthenticated because a scraper
+	# cannot present a credential -- so the refusal belongs here, at the edge.
+	handle /metrics* {
+		respond "Not found" 404
+	}
+
+	# Server-sent events. Without `flush_interval -1` Caddy buffers the response
+	# and the progress stream arrives in one piece at the end, which looks
+	# exactly like a pipeline that produced nothing until it finished.
+	handle /api/sessions/*/stream {
+		reverse_proxy api:4000 {
+			flush_interval -1
+			transport http {
+				read_timeout 1h
+			}
+		}
+	}
+
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+
+	handle /health {
+		reverse_proxy api:4000
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+
+	header {
+		# HSTS only makes sense once TLS is actually working; Caddy sets it only
+		# on HTTPS connections, so this is safe on a plain :80 deployment too.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

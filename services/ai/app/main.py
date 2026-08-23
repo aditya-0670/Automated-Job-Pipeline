@@ -18,7 +18,8 @@ import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from pydantic import BaseModel, Field, model_validator
 
 from app.api.deps import require_internal_key
@@ -185,6 +186,21 @@ async def ready(request: Request) -> dict[str, Any]:
         else "unavailable",
         "pipeline_available": getattr(request.app.state, "graph", None) is not None,
     }
+
+
+# ── Metrics ──────────────────────────────────────────────────────────────
+@app.get("/metrics", tags=["ops"], include_in_schema=False)
+async def metrics_endpoint() -> Response:
+    """Prometheus scrape target.
+
+    Unauthenticated, like the probes, and for the same reason: a scraper is
+    infrastructure and cannot present a credential. It is safe because this
+    service has no host-reachable address -- the compose file publishes no port
+    for it and the Kubernetes Service is ClusterIP with a NetworkPolicy in front.
+    Exposing it publicly would leak session counts and token spend, which is why
+    the gateway does not proxy this path.
+    """
+    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 # ── Extraction ───────────────────────────────────────────────────────────

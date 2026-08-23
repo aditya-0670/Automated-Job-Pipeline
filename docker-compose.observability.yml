@@ -1,0 +1,58 @@
+# Prometheus and Grafana, as an overlay on the running stack.
+#
+# A separate file rather than services in docker-compose.yml, for the same
+# reason Jenkins is separate: observability is not part of the system being
+# observed, and `make up` should not start a monitoring stack. It joins the
+# application's backend network so it can scrape services that publish no host
+# port -- which the AI service deliberately does not.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#   make observability            (the same thing)
+#
+# Grafana: http://localhost:3001   Prometheus: http://localhost:9090
+
+name: resumeforge
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      # 7 days. This is a laptop, and a metrics store that outgrows the disk is
+      # a monitoring system that causes the outage it was meant to catch.
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "${PROMETHEUS_PUBLISH_PORT:-9090}:9090"
+    networks: [backend]
+
+  grafana:
+    image: grafana/grafana:12.3.1
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      # No sign-up, no anonymous access. A dashboard showing token spend and
+      # session counts is not something to leave open.
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      # Nothing to phone home about from a laptop.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+    volumes:
+      - ./infra/observability/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./infra/observability/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on: [prometheus]
+    ports:
+      - "${GRAFANA_PUBLISH_PORT:-3001}:3000"
+    networks: [backend]
+
+volumes:
+  prometheus_data:
+  grafana_data:

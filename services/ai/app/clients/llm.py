@@ -35,6 +35,7 @@ from tenacity import (
     wait_exponential,
 )
 
+from app import metrics
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,10 @@ class TokenLedger:
     entries: list[dict[str, Any]] = field(default_factory=list)
 
     def record(self, step: str, response: LLMResponse) -> None:
+        # The ledger is per-session and lives in checkpointed state; the metric is
+        # process-wide and lives in Prometheus. Recording in one place keeps the
+        # two from disagreeing about what a run cost.
+        metrics.record_llm_response(step, response)
         self.entries.append(
             {
                 "step": step,
@@ -243,22 +248,34 @@ class GeminiProvider(LLMProvider):
         immediately rather than burning quota on three models.
         """
         last_error: LLMTransientError | None = None
-        for candidate in [self.model, *self.fallbacks]:
+        for index, candidate in enumerate([self.model, *self.fallbacks]):
             try:
-                return await self._complete_with(
-                    candidate,
-                    system=system,
-                    user=user,
-                    thinking_budget=thinking_budget,
-                    json_mode=json_mode,
-                )
+                # Instrumented here rather than in the agents: this is the only
+                # path to a paid call, so no agent can spend tokens without it
+                # being counted.
+                with metrics.timed(metrics.llm_latency, candidate):
+                    response = await self._complete_with(
+                        candidate,
+                        system=system,
+                        user=user,
+                        thinking_budget=thinking_budget,
+                        json_mode=json_mode,
+                    )
             except LLMTransientError as exc:
                 last_error = exc
+                metrics.llm_calls.labels(candidate, "error").inc()
                 logger.warning(
                     "Model %s unavailable (%s); trying next candidate",
                     candidate,
                     type(exc).__name__,
                 )
+                continue
+
+            # "fallback" and not "ok" when a later candidate answered: a build-up
+            # of fallbacks is the early warning that the primary model's quota is
+            # about to run out, and folding it into "ok" hides that entirely.
+            metrics.llm_calls.labels(candidate, "ok" if index == 0 else "fallback").inc()
+            return response
         raise last_error or LLMError("No Gemini model was available")
 
     @retry(

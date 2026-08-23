@@ -2,7 +2,7 @@
 
 > **Version**: 1.0.0
 > **Created**: 2026-08-20
-> **Status legend**: ✅ done · 🔄 in progress · ⬜ not started
+> **Status legend**: ✅ done · ◐ built but not run · 🔄 in progress · ⬜ not started
 > **Complexity**: S (≤1h) · M (2-4h) · L (5-8h) · XL (full day+)
 
 This is the working plan. Each part is independently completable, has explicit
@@ -36,7 +36,7 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 17 | GitHub Actions CI | M | 16 | ✅ |
 | 18 | Jenkins pipeline | M | 17 | ✅ |
 | 19 | Kubernetes on kind | L | 16 | ✅ |
-| 20 | AWS EC2 deploy + CD + observability | L | 17, 19 | ⬜ |
+| 20 | AWS EC2 deploy + CD + observability | L | 17, 19 | ◐ |
 
 **Interview-critical parts**: 1 (bullet 3), 7 + 10 (bullet 2 — retry and failure
 recovery), 16-20 (Docker, K8s, Jenkins, CI/CD, AWS).
@@ -940,12 +940,12 @@ nothing.
 
 ---
 
-## Part 20 — AWS EC2 deploy + CD + observability ⬜ · L
+## Part 20 — AWS EC2 deploy + CD + observability ◐ · L
 
 **Deliverables**
 - `infra/aws/` — t3.micro provisioning notes, security groups (only 80/443/22),
   `user-data` bootstrap installing Docker.
-- Caddy or nginx reverse proxy with automatic TLS.
+- Caddy reverse proxy with automatic TLS.
 - `.github/workflows/deploy.yml` — on `main`: build → push GHCR → SSH to EC2 →
   `docker compose pull && up -d`, with a health gate and rollback to the previous
   image tag on failure.
@@ -953,8 +953,71 @@ nothing.
   Grafana and one dashboard (pipeline duration, LLM tokens, error rate).
 - Root `README.md` with architecture diagram and a demo script.
 
-**Acceptance**: pushing to `main` deploys automatically; the public URL works;
-Grafana shows pipeline metrics.
+**Acceptance**: split, and the split is the honest part.
+
+**Observability: ✅ met and verified.** `make observability` brings up Prometheus
+and Grafana against the running stack. Both services are scraped (`ai:8000`,
+`api:4000` — both `up`), Grafana provisions its datasource and dashboard from
+files, and all **14 panels return live data**: pipeline runs by outcome, p50/p95
+duration, per-node timings, tokens by step and kind, model calls by outcome,
+guardrail rejections by kind, refactor attempts, extraction p95 (measured at
+**48.75ms**, which is the number behind the zero-token extraction claim), and the
+gateway's route latency, refusals and open-stream count. 12 new tests assert the
+metrics move when the thing they measure happens — a metric nobody increments
+renders as a flat zero, which looks exactly like a healthy quiet system.
+
+**AWS: ◐ written, never run.** There is no AWS account behind this repository, so
+`user-data.sh`, `docker-compose.prod.yml`, the `Caddyfile` and `deploy.yml` are
+complete and lint clean (actionlint, `compose config`) but have never touched an
+instance. Claiming otherwise would be the one dishonest line in this document.
+`infra/aws/README.md` lists exactly what a first real deploy must check, and the
+root README's status table says the same thing where a reader will actually see
+it.
+
+**Delivered beyond plan**
+
+- **Metrics chosen from the questions someone would ask at 3am**, not from what
+  is easy to instrument: is it working, is it slow, what is it costing, is the
+  model behaving. The fourth is the one a generic dashboard would miss —
+  guardrail rejections are *invisible* in an error rate because the pipeline
+  handles them, so a model that started hallucinating more would look completely
+  healthy without that panel.
+- **Token accounting is instrumented in the provider**, the single path to a paid
+  call, so no agent can spend tokens without it being counted. Thinking tokens
+  are tracked separately from output despite being billed together on Gemini 3.x,
+  because they are the line item that moves when a thinking budget changes.
+- **`fallback` is distinguished from `ok`** on model calls. A build-up of
+  fallbacks is the early warning that the primary model's daily quota is running
+  out — folding it into "ok" hides the one signal that predicts an outage.
+- **No metric carries a session id**, and a test asserts it. Unbounded
+  cardinality is the classic way to kill a Prometheus instance, and `session_id`
+  is the obvious label to add without thinking. The gateway labels by *route
+  pattern* for the same reason.
+- **Histogram buckets are chosen against observed reality.** The default buckets
+  top out at 10s, which would put every real pipeline run (30–90s) in `+Inf` and
+  make the histogram useless for exactly what it exists to measure.
+- **`timed()` records on failure too**, because a node that failed still took
+  time and is usually the slow one.
+- **The scrape endpoints are open, and the edge refuses them.** A scraper is
+  infrastructure and cannot present a credential, so `/metrics` is unauthenticated
+  like the probes — safe on the AI service, which has no host-reachable address,
+  and blocked at the Caddy layer for the gateway, which is internet-facing.
+  Session counts and token spend are not for the internet.
+- **Rollback reads the previous tag from the box**, not from git history: the
+  instance is the only thing that knows what actually survived the last deploy.
+  Because the previous images are already there, a rollback is a container
+  restart rather than a download — which is what makes it fast enough to be worth
+  having.
+- **Migrations run before the new code and as their own step**, so a migration
+  failure stops the deploy while the *old* version is still serving.
+- **`concurrency` does not cancel an in-progress deploy.** A deploy cancelled
+  between `pull` and `up` leaves the box half-updated; waiting is strictly better.
+- **`ssh-keyscan` rather than `StrictHostKeyChecking=no`**, which would accept
+  any host answering on that address — the whole attack.
+- **2GB of swap in the bootstrap.** A t3.micro has 1GB of RAM and the AI service
+  alone requests 512MB; without swap the kernel OOM-kills whichever container
+  most recently asked for memory, which is rarely the one at fault, and the
+  symptom is a service dying with nothing in its own logs.
 
 ---
 ---

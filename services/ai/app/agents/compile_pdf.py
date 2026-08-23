@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app import metrics
 from app.compile.latex import compile_latex
 from app.graph.events import step_event
 from app.graph.state import ResumeForgeState
@@ -30,7 +31,9 @@ async def compile_pdf_agent(state: ResumeForgeState) -> dict[str, Any]:
     if not latex.strip():
         return _failure(state, "There is no approved resume to compile.")
 
-    result = await compile_latex(latex, name=state.get("session_id") or "resume")
+    with metrics.timed(metrics.node_duration, "compile_pdf"):
+        result = await compile_latex(latex, name=state.get("session_id") or "resume")
+    metrics.compilations.labels("ok" if result.ok else "failed").inc()
     warnings = [*(state.get("warnings") or []), *result.warnings]
 
     if not result.ok:

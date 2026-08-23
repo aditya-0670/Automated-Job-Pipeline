@@ -1,0 +1,141 @@
+# The production stack, as it runs on EC2.
+#
+# Separate from the development compose file rather than an override of it,
+# because the two differ in the way that matters most: this one **builds
+# nothing**. Every service is a tagged image pulled from GHCR, which is what
+# makes a rollback a matter of changing one variable and running `up -d` rather
+# than rebuilding on a t3.micro with 1GB of RAM.
+#
+# Deployed by .github/workflows/deploy.yml, which writes .env next to this file
+# and runs `docker compose --env-file .env -f docker-compose.prod.yml up -d`.
+
+name: resumeforge
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      # HTTP/3. Harmless if the security group does not allow UDP; Caddy falls
+      # back to TCP.
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Named volumes, not bind mounts: these hold issued certificates, and
+      # losing them means re-issuing against Let's Encrypt rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+      web: { condition: service_healthy }
+    networks: [frontend, backend]
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-resumeforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:-resumeforge}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-resumeforge} -d ${POSTGRES_DB:-resumeforge}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [backend]
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [backend]
+
+  ai:
+    # IMAGE_TAG is the whole rollback mechanism: the deploy sets it to the new
+    # SHA, and a failed health gate sets it back to the previous one.
+    image: ghcr.io/${GITHUB_REPOSITORY:-aditya-0670/automated-job-pipeline}/ai:${IMAGE_TAG:?IMAGE_TAG is required}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-resumeforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resumeforge}
+      REDIS_URL: redis://redis:6379
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    # No ports. The gateway is the only legitimate caller and reaches it over
+    # the backend network.
+    networks: [backend]
+
+  api:
+    image: ghcr.io/${GITHUB_REPOSITORY:-aditya-0670/automated-job-pipeline}/api:${IMAGE_TAG}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-resumeforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resumeforge}?schema=app
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://ai:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      JWT_SECRET: ${JWT_SECRET:?}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?}
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      WEB_ORIGINS: ${WEB_ORIGINS:-https://localhost}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      ai: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [backend, frontend]
+
+  web:
+    image: ghcr.io/${GITHUB_REPOSITORY:-aditya-0670/automated-job-pipeline}/web:${IMAGE_TAG}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks: [frontend]
+
+  # Migrations as a one-shot service rather than a step in the deploy script, so
+  # `docker compose run --rm migrate` is the same command locally and on the box.
+  migrate:
+    image: ghcr.io/${GITHUB_REPOSITORY:-aditya-0670/automated-job-pipeline}/api:${IMAGE_TAG}
+    profiles: ["tools"]
+    command: ["npx", "prisma", "migrate", "deploy"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-resumeforge}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-resumeforge}?schema=app
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [backend]
+
+networks:
+  backend:
+  frontend:
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

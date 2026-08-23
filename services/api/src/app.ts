@@ -8,6 +8,7 @@
 
 import express from "express";
 
+import { metricsMiddleware, registry } from "./metrics.js";
 import { cors } from "./middleware/cors.js";
 import { httpLogger } from "./logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/errors.js";
@@ -30,6 +31,7 @@ export function createApp(deps: SessionDeps): express.Express {
   // Before the body parser and the routes: a preflight carries no body and must
   // never reach a handler.
   app.use(cors());
+  app.use(metricsMiddleware);
   // A resume template is the largest thing posted here; the default 100KB limit
   // rejects real LaTeX files with hand-written macros.
   app.use(express.json({ limit: "1mb" }));
@@ -49,6 +51,14 @@ export function createApp(deps: SessionDeps): express.Express {
     } catch {
       res.status(503).json({ status: "degraded", database: "unreachable" });
     }
+  });
+
+  app.get("/metrics", async (_req, res) => {
+    // Open, like the probes: a scraper cannot present a credential. The gateway
+    // *is* internet-facing, so in a real deployment this path is blocked at the
+    // reverse proxy -- see infra/aws/Caddyfile, which returns 403 for it.
+    res.set("content-type", registry.contentType);
+    res.send(await registry.metrics());
   });
 
   const readLimit = rateLimit(deps.redis, {

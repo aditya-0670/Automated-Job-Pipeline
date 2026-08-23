@@ -21,6 +21,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from app import metrics
 from app.extraction.aho import SkillMatch, TaxonomyMatcher, get_matcher
 from app.extraction.sections import SectionIndex
 from app.extraction.statistical import ScoredTerm, extract_statistical
@@ -135,6 +136,11 @@ def extract_keywords(
 
     ranked = sorted(keywords.values(), key=lambda k: (-k.score, k.term))[:max_keywords]
     duration_ms = (time.perf_counter() - started) * 1000
+    # Recorded here rather than in the node, so the demo endpoint and the graph
+    # contribute to the same histogram -- this is the number behind the claim
+    # that extraction is deterministic and effectively free.
+    metrics.extraction_duration.observe(duration_ms / 1000)
+    metrics.keywords_extracted.observe(len(ranked))
 
     return ExtractionResult(
         keywords=ranked,

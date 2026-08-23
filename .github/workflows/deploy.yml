@@ -1,0 +1,215 @@
+# Continuous deployment to EC2.
+#
+# Build once, push to GHCR, then tell the box to pull that exact tag. The images
+# are never built on the target: a t3.micro has 1GB of RAM, and a build there
+# would compete with the running application for the memory it is trying to
+# replace.
+#
+# Every image in a deploy carries the same tag -- the commit SHA -- so "which
+# version is running?" has one answer, and a rollback is that one variable
+# changed back.
+#
+# Required repository secrets:
+#   EC2_HOST         the public DNS name or IP
+#   EC2_SSH_KEY      private key for the `deploy` user (created by user-data.sh)
+#   POSTGRES_PASSWORD, INTERNAL_API_KEY, JWT_SECRET, ENCRYPTION_KEY
+#   GEMINI_API_KEY   optional; without it the pipeline uses the mock provider
+#   DOMAIN           optional; without it Caddy serves plain HTTP on :80
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Deploy an existing tag instead of building (use to roll back)"
+        required: false
+        type: string
+
+concurrency:
+  # Never two deploys at once, and do NOT cancel one in progress: a deploy
+  # cancelled between `pull` and `up` leaves the box half-updated.
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    name: Build and push images
+    runs-on: ubuntu-latest
+    # Skipped entirely when rolling back to an image that already exists.
+    if: ${{ !inputs.image_tag }}
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    strategy:
+      matrix:
+        include:
+          - service: ai
+            context: services/ai
+            target: runtime
+          - service: api
+            context: services/api
+            target: ""
+          - service: web
+            context: services/web
+            target: ""
+    steps:
+      - uses: actions/checkout@v5
+      - id: meta
+        run: echo "tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The workflow's own token. No long-lived registry credential to rotate.
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          target: ${{ matrix.target }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+            ghcr.io/${{ github.repository }}/${{ matrix.service }}:latest
+          # NEXT_PUBLIC_* is inlined into the client bundle at build time, so the
+          # public URL is a build argument. Changing DOMAIN needs a rebuild, not
+          # a restart -- which is the one genuinely surprising thing about
+          # deploying a Next.js app.
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.PUBLIC_URL || 'http://localhost' }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  deploy:
+    name: Deploy to EC2
+    needs: [build]
+    # `always()` so a rollback run, which skips the build job, still deploys.
+    if: ${{ always() && (needs.build.result == 'success' || inputs.image_tag) }}
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Resolve the tag being deployed
+        id: tag
+        run: |
+          tag="${{ inputs.image_tag || needs.build.outputs.tag }}"
+          test -n "$tag" || { echo "::error::no image tag to deploy"; exit 1; }
+          echo "value=$tag" >> "$GITHUB_OUTPUT"
+          echo "deploying $tag"
+
+      - name: Open an SSH session
+        run: |
+          install -m 700 -d ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          # Pinned on first connect. StrictHostKeyChecking=no would accept any
+          # host that answers on that address, which is the whole attack.
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Ship the compose file and configuration
+        run: |
+          scp -i ~/.ssh/id_ed25519 \
+            infra/aws/docker-compose.prod.yml infra/aws/Caddyfile \
+            deploy@${{ secrets.EC2_HOST }}:/opt/resumeforge/
+
+      - name: Record what is running now
+        id: previous
+        run: |
+          # The rollback target. Read from the box rather than assumed from git
+          # history, because the box is the only thing that knows what actually
+          # survived the last deploy.
+          previous=$(ssh -i ~/.ssh/id_ed25519 deploy@${{ secrets.EC2_HOST }} \
+            "grep '^IMAGE_TAG=' /opt/resumeforge/.env 2>/dev/null | cut -d= -f2" || true)
+          echo "tag=${previous}" >> "$GITHUB_OUTPUT"
+          echo "currently running: ${previous:-nothing}"
+
+      - name: Deploy
+        env:
+          TAG: ${{ steps.tag.outputs.value }}
+        run: |
+          ssh -i ~/.ssh/id_ed25519 deploy@${{ secrets.EC2_HOST }} bash -euo pipefail <<REMOTE
+            cd /opt/resumeforge
+
+            # Written fresh every deploy, so a secret removed from the
+            # repository disappears from the box on the next push rather than
+            # lingering in a file nobody reads.
+            cat > .env <<ENVEOF
+          IMAGE_TAG=${TAG}
+          GITHUB_REPOSITORY=${{ github.repository }}
+          POSTGRES_PASSWORD=${{ secrets.POSTGRES_PASSWORD }}
+          INTERNAL_API_KEY=${{ secrets.INTERNAL_API_KEY }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          ENCRYPTION_KEY=${{ secrets.ENCRYPTION_KEY }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          DOMAIN=${{ secrets.DOMAIN }}
+          WEB_ORIGINS=${{ secrets.PUBLIC_URL }}
+          AUTH_MODE=dev
+          ENVEOF
+            chmod 600 .env
+
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose --env-file .env -f docker-compose.prod.yml pull
+            # Migrations before the new code, and as their own step: a failure
+            # here must stop the deploy while the *old* version is still serving.
+            docker compose --env-file .env -f docker-compose.prod.yml run --rm migrate
+            docker compose --env-file .env -f docker-compose.prod.yml up -d --remove-orphans
+            docker logout ghcr.io
+          REMOTE
+
+      - name: Health gate
+        id: health
+        run: |
+          # The deploy is not finished when the containers start; it is finished
+          # when the application answers. Sixty seconds, because the AI service
+          # builds its automaton and runs checkpoint migrations at boot.
+          for i in $(seq 1 30); do
+            if curl -fsS --max-time 5 "http://${{ secrets.EC2_HOST }}/health" >/dev/null; then
+              echo "healthy after ${i} attempts"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the deployment never became healthy"
+          exit 1
+
+      - name: Roll back
+        if: failure() && steps.health.outcome == 'failure' && steps.previous.outputs.tag != ''
+        env:
+          PREVIOUS: ${{ steps.previous.outputs.tag }}
+        run: |
+          echo "::warning::health gate failed; rolling back to ${PREVIOUS}"
+          ssh -i ~/.ssh/id_ed25519 deploy@${{ secrets.EC2_HOST }} bash -euo pipefail <<REMOTE
+            cd /opt/resumeforge
+            # Only the tag changes. The images are already on the box from the
+            # previous deploy, so this is a container restart, not a download --
+            # which is what makes a rollback fast enough to be worth having.
+            sed -i "s/^IMAGE_TAG=.*/IMAGE_TAG=${PREVIOUS}/" .env
+            docker compose --env-file .env -f docker-compose.prod.yml up -d
+          REMOTE
+          for i in $(seq 1 30); do
+            curl -fsS --max-time 5 "http://${{ secrets.EC2_HOST }}/health" >/dev/null && \
+              { echo "rolled back to ${PREVIOUS} and healthy"; exit 1; }
+            sleep 2
+          done
+          echo "::error::rollback did not recover the service"
+          exit 1
+
+      - name: Report
+        if: success()
+        run: |
+          {
+            echo "### Deployed"
+            echo ""
+            echo "- tag: \`${{ steps.tag.outputs.value }}\`"
+            echo "- previous: \`${{ steps.previous.outputs.tag || 'none' }}\`"
+            echo "- url: ${{ secrets.PUBLIC_URL || format('http://{0}', secrets.EC2_HOST) }}"
+            echo ""
+            echo "To roll back: run this workflow with \`image_tag\` set to the previous tag."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -412,6 +412,29 @@ k8s-logs: ## Follow the AI service's logs across all replicas
 k8s-down: ## Delete the cluster
 	kind delete cluster --name $(KIND_CLUSTER)
 
+# ── Observability (Part 20) ───────────────────────────────────────────────
+OBS_COMPOSE = docker compose -f docker-compose.yml -f docker-compose.observability.yml
+
+.PHONY: observability
+observability: ## Start the stack with Prometheus and Grafana
+	$(OBS_COMPOSE) up -d --build
+	@echo "Grafana    http://localhost:$${GRAFANA_PUBLISH_PORT:-3001}  (admin/admin)"
+	@echo "Prometheus http://localhost:$${PROMETHEUS_PUBLISH_PORT:-9090}"
+
+.PHONY: observability-down
+observability-down: ## Stop Prometheus and Grafana, leave the app running
+	$(OBS_COMPOSE) stop prometheus grafana
+
+.PHONY: metrics
+metrics: ## Print the interesting metric lines from both services
+	@set -euo pipefail; \
+	echo "── AI service ──"; \
+	docker compose exec -T ai python -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8000/metrics').read().decode())" \
+		| grep -E "^resumeforge_(pipeline_runs|llm_tokens|guardrail|extraction_duration_seconds_count|pdf_compilations)" | head -20; \
+	echo "── Gateway ──"; \
+	curl -fsS localhost:$${API_PUBLISH_PORT:-4000}/metrics \
+		| grep -E "^resumeforge_api_(auth_failures|rate_limited|event_streams)" | head -10
+
 .PHONY: demo
 demo: ## SPENDS ~2 GEMINI CALLS. Full pipeline on the real resume.
 	@mkdir -p out && chmod 777 out

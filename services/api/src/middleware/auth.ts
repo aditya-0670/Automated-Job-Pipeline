@@ -12,6 +12,7 @@
 import jwt from "jsonwebtoken";
 
 import { getConfig } from "../config.js";
+import { recordAuthFailure } from "../metrics.js";
 import { ApiError } from "./errors.js";
 
 import type { RequestHandler } from "express";
@@ -53,6 +54,7 @@ export const requireAuth: RequestHandler = (req, _res, next) => {
   const header = req.headers.authorization ?? "";
   const [scheme, token] = header.split(" ");
   if (scheme?.toLowerCase() !== "bearer" || !token) {
+    recordAuthFailure("missing");
     next(ApiError.unauthorized("Send a bearer token in the Authorization header"));
     return;
   }
@@ -70,6 +72,10 @@ export const requireAuth: RequestHandler = (req, _res, next) => {
     next();
   } catch (err) {
     const expired = err instanceof jwt.TokenExpiredError;
+    // Separated in the metric for the same reason as in the message: a spike in
+    // "expired" is a client that stopped refreshing, a spike in "invalid" is
+    // someone probing.
+    recordAuthFailure(expired ? "expired" : "invalid");
     // Distinguished on purpose: "expired" tells a client to refresh, "invalid"
     // tells it to stop retrying. Collapsing them produces retry loops.
     next(ApiError.unauthorized(expired ? "Token expired" : "Invalid token"));

@@ -526,6 +526,49 @@ describe.skipIf(!hasDatabase)("CORS", () => {
   });
 });
 
+describe.skipIf(!hasDatabase)("metrics", () => {
+  async function newSession() {
+    const res = await request(app).post("/api/sessions").set(auth()).send({ jobText: JOB_TEXT });
+    return res.body.sessionId as string;
+  }
+
+  it("serves Prometheus text without a credential", async () => {
+    // A scraper is infrastructure and cannot present one. The gateway is
+    // internet-facing, so the reverse proxy blocks this path in production.
+    const res = await request(app).get("/metrics");
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toContain("text/plain");
+    expect(res.text).toContain("resumeforge_api_request_duration_seconds");
+  });
+
+  it("labels requests by route pattern, never by path", async () => {
+    // A path label would give every session id its own series -- unbounded
+    // cardinality, and the classic way to kill a Prometheus instance.
+    const id = await newSession();
+    await request(app).get(`/api/sessions/${id}`).set(auth());
+    const res = await request(app).get("/metrics");
+    expect(res.text).toContain('route="/api/sessions/:id"');
+    expect(res.text).not.toContain(id);
+  });
+
+  it("counts authentication failures by reason", async () => {
+    // A spike in "expired" is a client that stopped refreshing; a spike in
+    // "invalid" is someone probing. Collapsing them loses that.
+    await request(app).get("/api/profile");
+    const res = await request(app).get("/metrics");
+    expect(res.text).toContain('resumeforge_api_auth_failures_total{reason="missing"}');
+  });
+
+  it("pairs stream opens with closes", async () => {
+    const id = await newSession();
+    await request(app).get(`/api/sessions/${id}/stream`).set(auth());
+    const res = await request(app).get("/metrics");
+    // A growing gap between the two is leaked upstream connections.
+    expect(res.text).toContain('resumeforge_api_event_streams_total{event="opened"}');
+    expect(res.text).toContain('resumeforge_api_event_streams_total{event="closed"}');
+  });
+});
+
 describe.skipIf(!hasDatabase)("probes", () => {
   it("health needs no credential", async () => {
     expect((await request(app).get("/health")).status).toBe(200);

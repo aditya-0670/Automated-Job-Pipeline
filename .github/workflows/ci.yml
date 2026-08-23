@@ -340,6 +340,45 @@ jobs:
           docker rm -f web-ci
 
   # ── Infra ─────────────────────────────────────────────────────────────
+  # ── Observability ─────────────────────────────────────────────────────
+  observability:
+    name: infra · observability config
+    needs: changes
+    if: needs.changes.outputs.infra == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Validate the Prometheus config
+        # promtool catches a bad scrape config, which otherwise presents as a
+        # target that is simply never scraped -- a dashboard of flat zeros.
+        run: |
+          docker run --rm --entrypoint promtool \
+            -v "$PWD/infra/observability:/cfg" prom/prometheus:v3.7.3 \
+            check config /cfg/prometheus.yml
+      - name: Validate the Grafana dashboard
+        run: |
+          python3 - <<'PY'
+          import json, pathlib, sys
+          d = json.loads(pathlib.Path("infra/observability/grafana/dashboards/pipeline.json").read_text())
+          panels = [p for p in d["panels"] if p["type"] != "row"]
+          assert d["uid"] and d["title"], "dashboard needs a stable uid and a title"
+          # Every panel must query something. A panel with no targets renders as
+          # an empty box and looks like missing data rather than a broken file.
+          for p in panels:
+              assert p.get("targets"), f"panel {p['title']!r} has no query"
+              for t in p["targets"]:
+                  assert t["expr"].strip(), f"panel {p['title']!r} has an empty query"
+          print(f"{len(panels)} panels, all with queries")
+          PY
+      - name: Validate the production compose file
+        env:
+          IMAGE_TAG: ci
+          POSTGRES_PASSWORD: ci
+          INTERNAL_API_KEY: ci
+          JWT_SECRET: ci
+          ENCRYPTION_KEY: ci
+        run: docker compose -f infra/aws/docker-compose.prod.yml config -q
+
   compose-validate:
     name: infra · validate compose
     needs: changes
@@ -362,7 +401,7 @@ jobs:
   ci-status:
     name: CI status
     runs-on: ubuntu-latest
-    needs: [ai-lint, ai-test, ai-integration, ai-build, api-test, web-build, compose-validate]
+    needs: [ai-lint, ai-test, ai-integration, ai-build, api-test, web-build, observability, compose-validate]
     if: always()
     steps:
       - name: Fail if any job failed

@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from app import metrics
 from app.clients.llm import LLMError, LLMProvider, TokenLedger, get_llm
 from app.graph.events import step_event
 from app.graph.state import ResumeForgeState
@@ -73,6 +74,17 @@ async def evaluator_agent(
     factual_errors = factual.errors
     structural_errors = list(structural.errors)
     blocking = bool(factual_errors or structural_errors)
+
+    # Counted by kind, because they mean different things: a rise in factual
+    # failures says the model started claiming things the evidence does not
+    # support, while structural failures say it damaged the template. Neither
+    # shows up in an error rate, because the pipeline *handles* both -- which is
+    # exactly why they need their own signal.
+    if factual_errors:
+        metrics.guardrail_failures.labels("factual").inc(len(factual_errors))
+    if structural_errors:
+        metrics.guardrail_failures.labels("structural").inc(len(structural_errors))
+    metrics.self_corrections.observe(max(1, state.get("iteration_count", 1)))
 
     logger.info(
         "Evaluator rules: %d structural, %d factual errors (%d supported skills, 0 LLM tokens)",

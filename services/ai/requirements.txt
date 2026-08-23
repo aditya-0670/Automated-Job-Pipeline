@@ -35,3 +35,6 @@ redis==7.1.0
 # ─── Utilities ───
 python-json-logger==4.0.0
 tenacity==9.1.4
+
+# ─── Observability ───
+prometheus-client==0.24.1

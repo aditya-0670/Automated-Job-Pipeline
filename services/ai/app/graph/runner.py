@@ -26,9 +26,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+from app import metrics
 from app.graph.builder import HUMAN_REVIEW, KEYWORD_REVIEW
 from app.graph.checkpointer import latest_state, thread_config
 from app.graph.events import make_event
@@ -99,8 +101,14 @@ async def _drive(graph: Any, session_id: str, work: Callable[[], Awaitable[Any]]
     never ends. Recording the failure in the checkpoint means every replica sees
     it, the stream terminates, and the user gets a reason.
     """
+    started = time.perf_counter()
     try:
         await work()
+        # Duration is observed per *invocation*, not per session: a session that
+        # pauses for a human and resumes an hour later would otherwise report an
+        # hour of pipeline time, which is a measure of the user's coffee break.
+        metrics.pipeline_duration.observe(time.perf_counter() - started)
+        metrics.pipeline_runs.labels("completed").inc()
     except asyncio.CancelledError:
         logger.info("Run cancelled for session %s; state is checkpointed", session_id)
         raise
@@ -143,6 +151,7 @@ def start_run(
     async def work() -> Any:
         return await graph.ainvoke(state, config)
 
+    metrics.pipeline_runs.labels("started").inc()
     logger.info("Starting pipeline run for session %s", session_id)
     return registry.launch(session_id, _drive(graph, session_id, work))
 

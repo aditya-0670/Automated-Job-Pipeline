@@ -15,6 +15,7 @@ import type { Redis } from "ioredis";
 import type { RequestHandler } from "express";
 
 import { logger } from "../logger.js";
+import { recordRateLimited } from "../metrics.js";
 import { ApiError } from "./errors.js";
 
 export interface LimitOptions {
@@ -52,6 +53,7 @@ export function rateLimit(redis: Redis | null, options: LimitOptions): RequestHa
         res.setHeader("x-ratelimit-limit", options.limit);
         res.setHeader("x-ratelimit-remaining", remaining);
         if (count > options.limit) {
+          recordRateLimited(options.name);
           next(
             ApiError.tooManyRequests(
               `Rate limit exceeded for ${options.name}. Try again later.`,
