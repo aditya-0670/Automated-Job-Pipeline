@@ -21,8 +21,10 @@ from app.clients.llm import (
 )
 from app.config import Settings, get_settings
 
+# Gated by tests/conftest.py: also requires RUN_LIVE_LLM_TESTS=1, so a key in
+# .env is not on its own enough to spend quota.
 HAS_KEY = bool(os.getenv("GEMINI_API_KEY"))
-integration = pytest.mark.skipif(not HAS_KEY, reason="GEMINI_API_KEY not set")
+integration = pytest.mark.live
 
 
 # ── JSON parsing ─────────────────────────────────────────────────────────

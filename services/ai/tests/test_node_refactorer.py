@@ -32,8 +32,9 @@ PROFILE = json.loads((FIXTURES / "real_profile.json").read_text(encoding="utf-8"
 JD = (FIXTURES / "sample_jd.txt").read_text(encoding="utf-8")
 RESUME = (FIXTURES / "real_resume.tex").read_text(encoding="utf-8")
 
+# Gated by tests/conftest.py: also requires RUN_LIVE_LLM_TESTS=1.
 HAS_KEY = bool(os.getenv("GEMINI_API_KEY"))
-integration = pytest.mark.skipif(not HAS_KEY, reason="GEMINI_API_KEY not set")
+integration = pytest.mark.live
 
 
 @pytest.fixture(scope="module")
@@ -301,6 +302,8 @@ async def test_empty_latex_response_is_rejected(matched_state):
 async def live_result(matched_state):
     if not HAS_KEY:
         pytest.skip("GEMINI_API_KEY not set")
+    # One generation for the whole module -- five separate calls would be a
+    # quarter of the daily quota per test run.
     result = await refactorer_agent(matched_state)
     if result.get("error"):
         pytest.skip(f"live model unavailable: {result['error'][:120]}")
