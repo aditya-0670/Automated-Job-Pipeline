@@ -1,0 +1,10 @@
+# Pinned by name, resolved to the latest compatible version at image build time.
+# Deliberately short: every plugin is a permanent upgrade obligation.
+configuration-as-code
+workflow-aggregator
+job-dsl
+junit
+timestamper
+credentials-binding
+ws-cleanup
+ansicolor

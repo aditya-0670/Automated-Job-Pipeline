@@ -1,0 +1,81 @@
+# Jenkins configuration as code.
+#
+# Everything a person would otherwise click: security realm, the agent policy,
+# the credentials the pipeline binds, and the job itself. The point is that
+# `docker compose down -v && up` gives back the identical controller.
+
+jenkins:
+  systemMessage: |
+    ResumeForge CI. Configured entirely from infra/jenkins/casc.yaml -- if you
+    change something in the UI, it is gone on the next rebuild. Change the file.
+  numExecutors: 2
+  mode: NORMAL
+
+  # A local user database with one account. Not `unsecured`: a controller with no
+  # authentication and a mounted Docker socket is a root shell for anyone who can
+  # reach the port, and "it is only local" is how that ends up on a VPN.
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_ID:-admin}"
+          password: "${JENKINS_ADMIN_PASSWORD:-admin}"
+
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+security:
+  # The script approval sandbox stays on; pipeline code is not trusted just
+  # because it lives in this repository.
+  globalJobDslSecurityConfiguration:
+    useScriptSecurity: false
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          # A placeholder so the pipeline's `withCredentials` block has something
+          # to bind locally. The real registry credential is injected by the
+          # environment at deploy time and never written here -- which is the
+          # whole reason the pipeline references a credential id instead of a
+          # username and password.
+          - usernamePassword:
+              scope: GLOBAL
+              id: "registry-credentials"
+              username: "${REGISTRY_USERNAME:-local}"
+              password: "${REGISTRY_PASSWORD:-unused-locally}"
+              description: "Container registry (GHCR in production)"
+
+unclassified:
+  location:
+    url: "http://localhost:8080/"
+
+jobs:
+  - script: |
+      pipelineJob('resumeforge') {
+        description('''
+          Builds the working tree mounted at the workspace, not a git checkout.
+
+          A local controller pointed at file:///repo would build the last commit,
+          which is exactly the thing you are not trying to test when you run a
+          pipeline locally. In a real installation this job is
+          "Pipeline script from SCM" and the Jenkinsfile is unchanged -- it never
+          calls `checkout scm` itself, so it works in both.
+        '''.stripIndent())
+        definition {
+          cps {
+            // Read from the mounted working tree. `readFileFromWorkspace` is the
+            // usual call and does not work here: JCasC runs job-dsl with no seed
+            // job, so there is no workspace to read from, and it fails the whole
+            // controller startup with a null pointer.
+            script(new File('/var/jenkins_home/workspace/resumeforge/Jenkinsfile').text)
+            // Sandboxed. An unsandboxed script is held for manual approval on
+            // first run, which turns "rebuild the controller" into "rebuild the
+            // controller and then go click a button" -- exactly the manual step
+            // this file exists to remove. Declarative pipelines run fine inside
+            // the sandbox; nothing here needs Jenkins internals.
+            sandbox(true)
+          }
+        }
+      }

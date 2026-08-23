@@ -60,10 +60,15 @@ test-runtime: build-runtime-test ## Verify Chromium + pdflatex work as the servi
 	docker run --rm resumeforge-ai:runtime-test pytest tests/test_runtime_image.py -v
 
 .PHONY: test-checkpoint
+# Runs the test image against the compose Postgres over its network, rather than
+# `docker compose exec ai`: the `ai` container runs the *runtime* image in
+# production mode and has no pytest, so the exec form only worked when the dev
+# override happened to be applied.
 test-checkpoint: ## Run checkpointing tests against the running Postgres
-	docker compose exec -T \
+	docker run --rm --network resumeforge_backend \
 		-e DATABASE_URL="postgresql://resumeforge:resumeforge@postgres:5432/resumeforge" \
-		ai pytest tests/test_checkpointing.py -v
+		-v "$(PWD)/$(AI_DIR)":/app:z -w /app $(AI_TEST_IMAGE) \
+		pytest tests/test_checkpointing.py -v
 
 .PHONY: lint
 lint: ## Run the same gates CI runs
@@ -287,6 +292,28 @@ e2e: ## Drive the browser journey. Free by default; FULL=1 spends Gemini quota.
 # drives is the host's, so every `-v` inside a build resolves against the host
 # filesystem. Without this the builds mount empty directories.
 JENKINS_COMPOSE = HOST_WORKSPACE="$(PWD)" docker compose --env-file .env -f infra/jenkins/docker-compose.yml
+
+.PHONY: ci-up
+ci-up: ## Start Jenkins (http://localhost:8080, admin/admin by default)
+	$(JENKINS_COMPOSE) up -d --build
+	@echo "Jenkins starting at http://localhost:$${JENKINS_PORT:-8080}"
+
+.PHONY: ci-down
+ci-down: ## Stop Jenkins, keeping its volume
+	$(JENKINS_COMPOSE) down
+
+.PHONY: ci-reset
+ci-reset: ## Stop Jenkins and delete its volume, so the next start reconfigures from casc.yaml
+	$(JENKINS_COMPOSE) down -v
+
+.PHONY: ci-logs
+ci-logs: ## Follow the Jenkins controller log
+	$(JENKINS_COMPOSE) logs -f jenkins
+
+.PHONY: ci-build
+ci-build: ## Trigger a Jenkins build and wait for the result
+	@set -a; source .env; set +a; ./infra/jenkins/build.sh
+
 .PHONY: demo
 demo: ## SPENDS ~2 GEMINI CALLS. Full pipeline on the real resume.
 	@mkdir -p out && chmod 777 out

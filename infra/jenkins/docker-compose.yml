@@ -1,0 +1,61 @@
+# Jenkins for this project. Separate from the application's compose file on
+# purpose: CI is not part of the running system, and `make up` should not start
+# a build server.
+#
+#   docker compose -f infra/jenkins/docker-compose.yml up -d --build
+#   open http://localhost:8080   (admin / admin, or JENKINS_ADMIN_* in .env)
+
+name: resumeforge-ci
+
+services:
+  jenkins:
+    build:
+      context: .
+    image: resumeforge-jenkins:latest
+    restart: unless-stopped
+    environment:
+      JENKINS_ADMIN_ID: ${JENKINS_ADMIN_ID:-admin}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD:-admin}
+      REGISTRY_USERNAME: ${REGISTRY_USERNAME:-local}
+      REGISTRY_PASSWORD: ${REGISTRY_PASSWORD:-unused-locally}
+      # The repository's path **on the host**. With Docker-outside-of-Docker the
+      # daemon resolves every `-v` path against the host filesystem, where
+      # /var/jenkins_home/workspace/... does not exist -- so a build that mounts
+      # its own workspace silently gets empty directories and fails with errors
+      # about missing lockfiles. `make ci-up` sets this; see README.md.
+      HOST_WORKSPACE: ${HOST_WORKSPACE:-}
+    ports:
+      - "${JENKINS_PORT:-8080}:8080"
+      # The agent port, published so a future outboard agent can connect.
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - ./casc.yaml:/var/jenkins_home/casc.yaml:ro
+      # The working tree, mounted *as the job's workspace*. The build then runs
+      # against what is on disk right now -- uncommitted work included -- which
+      # is the only reason to run a pipeline locally rather than push and wait.
+      - ../..:/var/jenkins_home/workspace/resumeforge:z
+      # Docker-outside-of-Docker: the host's daemon, not a nested one. See the
+      # Dockerfile for why, and for what it costs.
+      - /var/run/docker.sock:/var/run/docker.sock
+    group_add:
+      # The socket is root:docker on the host, and the jenkins user is neither.
+      # Passed in rather than hardcoded because the gid differs per distribution.
+      - "${DOCKER_GID:-988}"
+    security_opt:
+      # Required on SELinux hosts (Fedora, RHEL). The socket is labelled
+      # `container_var_run_t`, which a confined container may not open no matter
+      # what group it is in -- the group membership above is necessary and not
+      # sufficient, and the symptom is a bare "permission denied" that looks like
+      # a gid problem.
+      #
+      # This is a real reduction in isolation, and it is worth being plain about
+      # why it is acceptable here and not in general: a container holding the
+      # host's Docker socket can already start a privileged container and own the
+      # host, so SELinux confinement was not what was protecting this machine.
+      # The hardening that would actually help is a socket proxy exposing only
+      # the endpoints the builds use -- see README.md.
+      - label=disable
+
+volumes:
+  jenkins_home:
