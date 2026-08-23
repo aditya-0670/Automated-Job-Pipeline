@@ -1,9 +1,9 @@
 """FastAPI surface for the AI service.
 
-Scope note: this is the subset of Part 11 needed to make the service a real
-container -- health, readiness, and a synchronous extraction endpoint that
-demonstrates the zero-token pipeline. The pipeline run/resume/SSE endpoints
-arrive with Part 11, once the remaining nodes exist.
+Composition only: the probes and the synchronous extraction endpoint live here,
+the pipeline endpoints live in `app/api/pipeline.py`, and everything either of
+them does is implemented under `app/graph/` and `app/agents/`. This module owns
+startup, the trust boundary, and correlation -- nothing that decides anything.
 
 The service is not internet-facing. Every functional route requires the shared
 internal key; only the probes are open, because a load balancer cannot present
@@ -16,18 +16,20 @@ import logging
 import time
 import uuid
 from contextlib import AsyncExitStack, asynccontextmanager
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request, status
+from fastapi import Depends, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel, Field, model_validator
 
-from app.agents.scraper_keyword import scraper_keyword_agent
+from app.api.deps import require_internal_key
+from app.api.pipeline import router as pipeline_router
 from app.clients.cache import get_cache
-from app.config import Settings, get_settings
+from app.config import get_settings
 from app.extraction.aho import get_matcher
 from app.extraction.pipeline import extract_keywords
-from app.graph.builder import SCRAPER_KEYWORD, build_graph
+from app.graph.builder import build_graph, real_nodes
 from app.graph.checkpointer import async_checkpointer
+from app.graph.runner import RunRegistry
 from app.logging_config import configure_logging, request_id_var, session_id_var
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,11 @@ async def lifespan(app: FastAPI):
     matcher = get_matcher()
     app.state.matcher = matcher
     app.state.cache = get_cache()
+    # In-flight background runs for *this* process. Not the source of truth for
+    # whether a session is running -- the checkpoint is -- but it gives shutdown
+    # something to cancel, and cancelling is safe because work is checkpointed
+    # per node.
+    app.state.runs = RunRegistry()
 
     # The checkpointer's connection pool must live as long as the app, so it is
     # entered on an exit stack rather than a `with` block.
@@ -60,7 +67,7 @@ async def lifespan(app: FastAPI):
 
         app.state.checkpointer = checkpointer
         app.state.graph = (
-            build_graph({SCRAPER_KEYWORD: scraper_keyword_agent}, checkpointer=checkpointer)
+            build_graph(real_nodes(cache=app.state.cache), checkpointer=checkpointer)
             if checkpointer is not None
             else None
         )
@@ -78,6 +85,9 @@ async def lifespan(app: FastAPI):
         )
         yield
         app.state.ready = False
+        # Stop accepting first, then drain: a run cancelled mid-node resumes from
+        # its last checkpoint, so at worst one node is repeated.
+        await app.state.runs.shutdown()
         logger.info("AI service shutting down")
 
 
@@ -87,7 +97,7 @@ app = FastAPI(
         "Internal service: LangGraph agent pipeline and deterministic keyword "
         "extraction. Not internet-facing -- reached only via the API gateway."
     ),
-    version="0.3.0",
+    version="0.4.0",
     lifespan=lifespan,
 )
 
@@ -119,24 +129,10 @@ async def correlate(request: Request, call_next):
 
 
 # ── Trust boundary ───────────────────────────────────────────────────────
-async def require_internal_key(
-    x_internal_key: Annotated[str | None, Header()] = None,
-    settings: Settings = Depends(get_settings),
-) -> None:
-    """The AI service trusts the gateway, and nothing else.
-
-    Compared with `compare_digest` rather than `==` so a wrong key cannot be
-    recovered by timing the response.
-    """
-    import secrets
-
-    expected = settings.internal_api_key
-    if not expected:
-        raise HTTPException(
-            status.HTTP_500_INTERNAL_SERVER_ERROR, "INTERNAL_API_KEY is not configured"
-        )
-    if not x_internal_key or not secrets.compare_digest(x_internal_key, expected):
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid or missing internal API key")
+# `require_internal_key` lives in app/api/deps.py so the pipeline router can
+# depend on it without importing this module, which would be circular. Re-exported
+# here because it reads as part of this module's contract.
+__all__ = ["app", "require_internal_key"]
 
 
 # ── Schemas ──────────────────────────────────────────────────────────────
@@ -218,3 +214,6 @@ async def extract(payload: ExtractRequest, request: Request) -> dict[str, Any]:
         job_text, matcher=request.app.state.matcher, max_keywords=payload.max_keywords
     )
     return {"scrape_tier": tier, "job_metadata": metadata, **result.to_dict()}
+
+
+app.include_router(pipeline_router)

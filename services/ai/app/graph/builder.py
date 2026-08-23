@@ -74,6 +74,41 @@ def default_nodes() -> dict[str, NodeFn]:
     }
 
 
+def real_nodes(*, cache: Any = None) -> dict[str, NodeFn]:
+    """The production node registry.
+
+    Imported lazily inside the function on purpose: the agents pull in the LLM
+    client, the scraper and the compiler, and this module's whole value is that
+    the topology can be imported -- and tested -- without any of them.
+
+    `keyword_review` and `human_review` are both interrupt points. `keyword_review`
+    keeps its stub because the user's answer is written straight into state by
+    `app/graph/resume.py` and no node work is needed to apply it; `human_review`
+    has a real node because a decision has to be validated and translated into
+    the state the next node expects.
+    """
+    from functools import partial
+
+    from app.agents.compile_pdf import compile_pdf_agent
+    from app.agents.data_retriever import data_retriever_agent
+    from app.agents.evaluator import evaluator_agent
+    from app.agents.human_review import human_review_agent
+    from app.agents.refactorer import refactorer_agent
+    from app.agents.scraper_keyword import scraper_keyword_agent
+
+    scraper: NodeFn = (
+        partial(scraper_keyword_agent, cache=cache) if cache is not None else scraper_keyword_agent
+    )
+    return {
+        SCRAPER_KEYWORD: scraper,
+        DATA_RETRIEVER: data_retriever_agent,
+        REFACTORER: refactorer_agent,
+        EVALUATOR: evaluator_agent,
+        HUMAN_REVIEW: human_review_agent,
+        COMPILE_PDF: compile_pdf_agent,
+    }
+
+
 def build_graph(
     nodes: dict[str, NodeFn] | None = None,
     *,

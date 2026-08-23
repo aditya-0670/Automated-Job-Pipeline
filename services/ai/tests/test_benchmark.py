@@ -71,12 +71,19 @@ def test_aho_beats_naive_and_report(matcher, taxonomy, long_jd):
 def test_search_scales_with_text_not_pattern_count(taxonomy, long_jd):
     """The defining property: query time is independent of pattern count.
 
-    Quartering the taxonomy should not meaningfully change search time, whereas
-    the naive baseline scales linearly with it.
+    The pattern set is grown with synthetic entries that appear nowhere in the
+    text, so the *only* variable that changes is how many patterns the automaton
+    holds. Comparing the real taxonomy against a quartered one would not isolate
+    that: the quarter also matches fewer terms, and per-match bookkeeping is real
+    work, so the measurement would conflate pattern count with match count and
+    report a cost that has nothing to do with the property being claimed.
     """
-    quarter = dict(list(taxonomy.items())[: len(taxonomy) // 4])
-    small = TaxonomyMatcher(quarter)
-    full = TaxonomyMatcher(taxonomy)
+    padded = dict(taxonomy)
+    for i in range(len(taxonomy) * 3):
+        padded[f"__SyntheticSkill{i}__"] = {"category": "synthetic", "aliases": []}
+
+    small = TaxonomyMatcher(taxonomy)
+    full = TaxonomyMatcher(padded)
 
     small_ms = _time(lambda: small.find_skills(long_jd))
     full_ms = _time(lambda: full.find_skills(long_jd))
@@ -87,8 +94,9 @@ def test_search_scales_with_text_not_pattern_count(taxonomy, long_jd):
         f"\n  ratio: {full_ms / small_ms:.2f}x for {full.pattern_count / small.pattern_count:.1f}x the patterns"
     )
 
-    # 4x the patterns must cost far less than 4x the time.
-    assert full_ms < small_ms * 2.5
+    # 4x the patterns, same matches: the cost must barely move. The headroom is
+    # for scheduler noise on a loaded CI box, not for a real slope.
+    assert full_ms < small_ms * 1.6
 
 
 def test_scaling_curve_as_taxonomy_grows(taxonomy, long_jd):

@@ -40,8 +40,15 @@ bench: ## Print the Aho-Corasick benchmark tables
 	$(AI_RUN) pytest tests/test_benchmark.py -s --no-header
 
 .PHONY: integration
-integration: ## Run tests including live Gemini calls (needs GEMINI_API_KEY)
+integration: ## Run the suite with .env loaded. Live LLM tests still SKIP by default.
 	docker run --rm --env-file .env -v "$(PWD)/$(AI_DIR)":/app:z $(AI_TEST_IMAGE) pytest tests/ -v
+
+.PHONY: test-live
+test-live: ## SPENDS GEMINI QUOTA (free tier: 20/day, 5/min). Opt-in only.
+	@echo "This spends real API quota. Free tier allows 20 requests/day."
+	@read -p "Continue? [y/N] " ok && [ "$$ok" = "y" ] || exit 1
+	docker run --rm --env-file .env -e RUN_LIVE_LLM_TESTS=1 \
+		-v "$(PWD)/$(AI_DIR)":/app:z $(AI_TEST_IMAGE) pytest tests/ -v -m live
 
 .PHONY: build-runtime-test
 build-runtime-test: ## Build the runtime image plus test tooling
@@ -135,8 +142,34 @@ smoke: ## Hit the running stack the way CI does
 		localhost:8000/internal/extract \
 		| python3 -m json.tool | head -40
 
+.PHONY: smoke-pipeline
+smoke-pipeline: ## Start a session over HTTP and prove the interrupt is durable. Spends no tokens.
+	@set -euo pipefail; \
+	source .env; \
+	sid="smoke-$$(date +%s)"; \
+	echo "-- POST /internal/pipeline/run ($$sid)"; \
+	python3 -c 'import json,pathlib,sys; print(json.dumps({"session_id": sys.argv[1], "user_id": "smoke", "user_latex": pathlib.Path("services/ai/tests/fixtures/real_resume.tex").read_text(), "user_profile": json.load(open("services/ai/tests/fixtures/real_profile.json")), "job_text": pathlib.Path("services/ai/tests/fixtures/sample_jd.txt").read_text()}))' "$$sid" > /tmp/rf-run.json; \
+	curl -fsS -X POST -H "x-internal-key: $$INTERNAL_API_KEY" -H 'Content-Type: application/json' \
+		-d @/tmp/rf-run.json localhost:8000/internal/pipeline/run; echo; \
+	sleep 2; \
+	echo "-- GET events (SSE, closes at the keyword gate)"; \
+	curl -fsS -N -m 10 -H "x-internal-key: $$INTERNAL_API_KEY" \
+		localhost:8000/internal/pipeline/$$sid/events | head -8; \
+	echo "-- restarting the ai container mid-session"; \
+	docker compose restart ai >/dev/null; \
+	until curl -fsS localhost:8000/health >/dev/null 2>&1; do sleep 1; done; \
+	echo "-- GET status (a different process, same paused session)"; \
+	curl -fsS -H "x-internal-key: $$INTERNAL_API_KEY" localhost:8000/internal/pipeline/$$sid \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["paused_at"]=="keyword_review", d; print("still paused at", d["paused_at"], "with", len(d["keyword_review"]["keywords"]), "keywords ✓")'
+
+# ── Jenkins (Part 18) ─────────────────────────────────────────────────────
+# HOST_WORKSPACE is the repository path as the *host's* Docker daemon sees it.
+# The Jenkins container mounts this tree as its workspace, but the daemon it
+# drives is the host's, so every `-v` inside a build resolves against the host
+# filesystem. Without this the builds mount empty directories.
+JENKINS_COMPOSE = HOST_WORKSPACE="$(PWD)" docker compose --env-file .env -f infra/jenkins/docker-compose.yml
 .PHONY: demo
-demo: ## Run the full pipeline end-to-end on the real resume (needs GEMINI_API_KEY)
+demo: ## SPENDS ~2 GEMINI CALLS. Full pipeline on the real resume.
 	@mkdir -p out && chmod 777 out
 	docker run --rm --env-file .env \
 		-v "$(PWD)/$(AI_DIR)":/app:z -v "$(PWD)/out":/out:z \

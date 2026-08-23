@@ -193,3 +193,62 @@ def test_fontawesome_glyphs_actually_render(tmp_path):
     assert any("FontAwesome" in name for name in embedded), (
         f"no FontAwesome font was embedded; fonts found: {sorted(embedded)}"
     )
+
+
+# ── Node 6, against the real compiler ─────────────────────────────────────
+# The fast suite covers `app/compile/` with the compiler stubbed and covers the
+# graph with the node stubbed, so nothing there ever puts the two together. This
+# is the one place the approved-LaTeX-to-file path runs for real.
+@needs_latex
+async def test_the_compile_node_turns_an_approved_resume_into_a_pdf(tmp_path):
+    import json
+
+    from app.agents.compile_pdf import compile_pdf_agent
+    from app.graph.state import initial_state
+    from app.graph.steps import Step
+
+    fixtures = Path(__file__).parent / "fixtures"
+    state = initial_state(
+        session_id="runtime-compile",
+        user_id="u-aditya",
+        user_latex=(fixtures / "real_resume.tex").read_text(encoding="utf-8"),
+        user_profile=json.loads((fixtures / "real_profile.json").read_text(encoding="utf-8")),
+        job_text="x",
+    )
+    # What the user approved at human review is what gets compiled.
+    state["final_latex"] = state["user_latex"]
+
+    result = await compile_pdf_agent(state)
+
+    assert result["current_step"] == Step.COMPLETE.value
+    assert result["error"] is None
+    pdf = Path(result["pdf_path"])
+    assert pdf.is_file() and pdf.read_bytes().startswith(b"%PDF")
+    assert result["events"][-1]["data"]["pages"] == 1
+
+
+@needs_latex
+async def test_a_broken_resume_fails_the_node_with_an_actionable_message(tmp_path):
+    """A compile failure this late must not discard the run: the user still has
+    an approved document, so the node reports why rather than losing it."""
+    from app.agents.compile_pdf import compile_pdf_agent
+    from app.graph.state import initial_state
+    from app.graph.steps import Step
+
+    state = initial_state(
+        session_id="runtime-compile-bad",
+        user_id="u",
+        user_latex="x",
+        user_profile={},
+        job_text="x",
+    )
+    state["final_latex"] = r"\documentclass{article}\usepackage{nosuchpackage}" + (
+        r"\begin{document}x\end{document}"
+    )
+
+    result = await compile_pdf_agent(state)
+
+    assert result["current_step"] == Step.FAILED.value
+    # The actionable line, not 400 lines of TeX noise (NFR-05.4).
+    assert "nosuchpackage" in result["error"]
+    assert len(result["error"].splitlines()) == 1
