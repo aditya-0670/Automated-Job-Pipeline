@@ -228,6 +228,12 @@ jobs:
       # `?schema=app` for the same reason the service uses it: Prisma owns the
       # `app` schema and LangGraph owns `public`.
       DATABASE_URL: postgresql://resumeforge:resumeforge@localhost:5432/resumeforge_test?schema=app
+      # The config validator refuses to start without these, which is the point
+      # of it. Dummy values: no test here talks to anything that would accept a
+      # real one.
+      INTERNAL_API_KEY: ci-internal-key
+      JWT_SECRET: ci-jwt-secret-value
+      ENCRYPTION_KEY: ci-encryption-key-32-bytes-long!
 
     steps:
       - uses: actions/checkout@v5

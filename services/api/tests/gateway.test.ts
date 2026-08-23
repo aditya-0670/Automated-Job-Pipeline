@@ -15,6 +15,10 @@ import request from "supertest";
 process.env.INTERNAL_API_KEY ??= "test-internal-key";
 process.env.JWT_SECRET ??= "test-jwt-secret-value";
 process.env.AUTH_MODE ??= "dev";
+// Set here rather than inherited from .env: a test that only passes because a
+// developer happens to have an env file is a test that fails in CI, which is
+// exactly how this one was found.
+process.env.ENCRYPTION_KEY ??= "test-encryption-key-32-bytes-min";
 // The gateway logs every request; 45 tests of that is noise, not signal.
 process.env.LOG_LEVEL = "silent";
 
