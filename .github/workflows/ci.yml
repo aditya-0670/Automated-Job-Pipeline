@@ -277,11 +277,19 @@ jobs:
           docker run -d --name api-ci --network host \
             -e DATABASE_URL='postgresql://resumeforge:resumeforge@localhost:5432/resumeforge_test?schema=app' \
             -e INTERNAL_API_KEY=ci-internal-key -e JWT_SECRET=ci-jwt-secret-value \
+            -e ENCRYPTION_KEY='ci-encryption-key-32-bytes-long!' \
             -e AI_SERVICE_URL=http://localhost:8000 resumeforge-api:ci
           for i in $(seq 1 30); do
             curl -fsS localhost:4000/health >/dev/null 2>&1 && break || sleep 1
           done
-          curl -fsS localhost:4000/health
+          # Without this, a container that refused to start reports only
+          # "curl: (7) failed to connect" and the actual reason -- which the
+          # container logged before exiting -- is thrown away.
+          if ! curl -fsS localhost:4000/health; then
+            echo "::error::the gateway image never became healthy"
+            docker logs api-ci || true
+            exit 1
+          fi
           # /ready proves the container reached Postgres through the real client,
           # which is the part the unit tests cannot cover.
           curl -fsS localhost:4000/ready | grep -q '"database":"ok"'
