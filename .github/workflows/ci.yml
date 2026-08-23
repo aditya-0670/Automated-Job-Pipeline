@@ -355,7 +355,11 @@ jobs:
         # Skipped jobs are fine -- that is the path filter doing its job.
         # Only genuine failures and cancellations should block.
         run: |
-          results='${{ join(needs.*.result, " ") }}'
+          # Single quotes: GitHub's expression syntax has no double-quoted
+          # string literal, and a double quote here makes the *whole workflow
+          # file* unparseable -- the run fails in 0s with "workflow file issue"
+          # and no annotation pointing at the line.
+          results='${{ join(needs.*.result, ' ') }}'
           echo "job results: $results"
           for r in $results; do
             case "$r" in
