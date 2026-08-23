@@ -34,3 +34,6 @@ tmp/
 # CI artifacts
 junit*.xml
 out/
+
+# TypeScript incremental build state
+*.tsbuildinfo

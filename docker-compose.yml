@@ -119,6 +119,7 @@ services:
       ENCRYPTION_KEY: ${ENCRYPTION_KEY}
       GITHUB_SYNC_TTL_MINUTES: ${GITHUB_SYNC_TTL_MINUTES:-60}
       AUTH_MODE: ${AUTH_MODE:-dev}
+      WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:3000}
       SEED_USER_EMAIL: ${SEED_USER_EMAIL:-aditya@resumeforge.dev}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       API_PORT: 4000
@@ -137,14 +138,29 @@ services:
     security_opt:
       - no-new-privileges:true
 
-  # ── Part 15 ───────────────────────────────────────────────────────────
-  # web:
-  #   build: { context: ./services/web }
-  #   environment:
-  #     NEXT_PUBLIC_API_URL: http://localhost:4000
-  #   depends_on: [api]
-  #   ports: ["3000:3000"]
-  #   networks: [frontend]
+  web:
+    build:
+      context: ./services/web
+      target: runtime
+      args:
+        # A build argument, not an environment variable: NEXT_PUBLIC_* values are
+        # inlined into the client bundle at build time, so changing this at
+        # runtime does nothing. It is the URL the *browser* uses, which is why it
+        # is localhost rather than the compose service name.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
+    image: resumeforge-web:latest
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "${WEB_PUBLISH_PORT:-3000}:3000"
+    # Frontend network only. The browser's server-side half has no business
+    # reaching postgres or the AI service, and on this network it cannot resolve
+    # them at all.
+    networks: [frontend]
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   # Two networks so that, once `web` exists, it can reach `api` without being

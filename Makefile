@@ -265,6 +265,22 @@ github-sync: ## Sync projects from your real GitHub. Needs GITHUB_TOKEN in .env.
 	echo "-- the projects the pipeline can now draw on"; \
 	curl -fsS -H "Authorization: Bearer $$token" localhost:4000/api/profile \
 		| python3 -c 'import json,sys; p=json.load(sys.stdin)["profile"]; [print("  ", x["name"], "--", ", ".join(x["tech"][:4])) for x in p["projects"]]'
+
+.PHONY: e2e
+e2e: ## Drive the browser journey. Free by default; FULL=1 spends Gemini quota.
+	@mkdir -p out && chmod 777 out
+	@# --network host so `localhost:3000` and `localhost:4000` mean the same
+	@# thing inside the container as they do in a real browser on this machine:
+	@# the client bundle is built with a localhost API URL, so a bridge network
+	@# would make every fetch from the page fail.
+	docker run --rm --network host \
+		-e WEB_URL=http://localhost:$${WEB_PUBLISH_PORT:-3000} -e FULL="$(FULL)" \
+		-e SESSION_URL="$(SESSION_URL)" \
+		-v "$(PWD)/$(AI_DIR)":/app:z \
+		-v "$(PWD)/services/web/e2e":/e2e:z \
+		-v "$(PWD)/out":/out:z \
+		resumeforge-ai:runtime-test python /e2e/journey.py
+
 # ── Jenkins (Part 18) ─────────────────────────────────────────────────────
 # HOST_WORKSPACE is the repository path as the *host's* Docker daemon sees it.
 # The Jenkins container mounts this tree as its workspace, but the daemon it

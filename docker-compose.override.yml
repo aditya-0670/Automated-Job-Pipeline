@@ -27,3 +27,35 @@ services:
     healthcheck:
       # Fast startup without the browser/LaTeX payload.
       start_period: 10s
+    # Development only: a host port for the AI service, so `make smoke` and
+    # `make smoke-pipeline` can reach it without going through the gateway. The
+    # production compose file publishes nothing for it, which is what makes
+    # "the AI service is unreachable from outside the compose network" a
+    # property of the deployment rather than an aspiration.
+    ports:
+      - "${AI_PUBLISH_PORT:-8000}:8000"
+
+  api:
+    build:
+      target: build
+    volumes:
+      - ./services/api/src:/app/src:z
+      - ./services/api/prisma:/app/prisma:z
+    environment:
+      LOG_LEVEL: debug
+    # tsx watch, so an edit restarts the gateway without a rebuild. The runtime
+    # image runs compiled JavaScript; this is the only place tsx is used.
+    command: ["npx", "tsx", "watch", "src/index.ts"]
+
+  web:
+    build:
+      target: build
+    volumes:
+      - ./services/web/app:/app/app:z
+      - ./services/web/lib:/app/lib:z
+      - ./services/web/components:/app/components:z
+    command: ["npx", "next", "dev", "-p", "3000"]
+    environment:
+      # In dev the value is read at runtime by `next dev`, so it works as an
+      # environment variable here even though the production image bakes it in.
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4000}
