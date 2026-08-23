@@ -1,0 +1,21 @@
+# Pin the ingress controller to the node that has the host port mappings.
+#
+# kind's extraPortMappings are per-node, and this cluster puts 80/443 on the
+# control plane. The upstream kind manifest for ingress-nginx used to carry a
+# `nodeSelector: ingress-ready=true` that matched; as of v1.13 it selects only
+# `kubernetes.io/os: linux`, so the controller schedules onto whichever node the
+# scheduler prefers -- and on a worker it is reachable from inside the cluster
+# and from nothing else. The symptom is a connection reset on localhost:8081 with
+# a perfectly healthy controller in the logs.
+#
+# Applied as an explicit patch rather than left to upstream, because a
+# dependency's default is not a thing this deployment should silently rely on.
+#
+#   kubectl -n ingress-nginx patch deploy ingress-nginx-controller \
+#     --patch-file infra/k8s/ingress-nginx-kind-patch.yaml
+spec:
+  template:
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+        ingress-ready: "true"

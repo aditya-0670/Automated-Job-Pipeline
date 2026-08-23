@@ -1,0 +1,21 @@
+# Non-secret configuration. Everything here is safe in a git repository and in
+# `kubectl describe` output; anything that is not lives in the Secret.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: resumeforge-config
+data:
+  # Service DNS, not IPs: a Service's cluster IP survives a pod restart but not
+  # a namespace rebuild, and the name is stable across both.
+  AI_SERVICE_URL: "http://ai:8000"
+  REDIS_URL: "redis://redis:6379"
+  LOG_LEVEL: "INFO"
+  AUTH_MODE: "dev"
+  SEED_USER_EMAIL: "aditya@resumeforge.dev"
+  # The browser talks to the gateway through the ingress on the host, so this is
+  # a host URL, not a cluster one.
+  WEB_ORIGINS: "http://localhost:8081"
+  LLM_PROVIDER: "gemini"
+  GEMINI_MODEL: "gemini-3.7-flash"
+  POSTGRES_DB: "resumeforge"
+  POSTGRES_USER: "resumeforge"

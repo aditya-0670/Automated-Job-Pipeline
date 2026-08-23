@@ -1,0 +1,58 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 3000
+      targetPort: 3000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      # Kubernetes injects a Docker-links compatibility variable for every
+      # Service in the namespace: a Service named `ai` produces AI_PORT,
+      # AI_SERVICE_HOST, AI_SERVICE_PORT and friends in *every* pod. That
+      # collided head-on with this service's own AI_PORT setting, which arrived
+      # as "tcp://10.96.59.213:8000" and failed pydantic validation at startup
+      # -- a crash loop whose cause is invisible unless you print the
+      # environment. The variables are a relic of Docker links; nothing here
+      # reads them, so they are turned off rather than worked around.
+      enableServiceLinks: false
+      containers:
+        - name: web
+          image: resumeforge-web:k8s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          startupProbe:
+            httpGet: { path: /, port: 3000 }
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet: { path: /, port: 3000 }
+            periodSeconds: 10
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits: { memory: 384Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }

@@ -1,0 +1,96 @@
+# Postgres as a StatefulSet, not a Deployment.
+#
+# The difference that matters here is not the stable name -- it is that a
+# StatefulSet's volumeClaimTemplate gives each replica its own PVC and will not
+# let two pods mount the same one. A Deployment with a PVC happily runs two pods
+# against one volume during a rolling update, and two postmasters on one data
+# directory is how a database gets corrupted.
+#
+# One replica. Postgres does not scale by adding pods; replication is a
+# different design and is out of scope for a demo cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  # Headless: a StatefulSet's pods are addressed individually
+  # (postgres-0.postgres), and there is nothing to load balance across.
+  clusterIP: None
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+      targetPort: 5432
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      securityContext:
+        # The official image's postgres user. Set at the pod level so the
+        # volume is chowned to match on mount.
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      containers:
+        - name: postgres
+          image: postgres:17-alpine
+          ports:
+            - containerPort: 5432
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef: { name: resumeforge-config, key: POSTGRES_DB }
+            - name: POSTGRES_USER
+              valueFrom:
+                configMapKeyRef: { name: resumeforge-config, key: POSTGRES_USER }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: resumeforge-secrets, key: POSTGRES_PASSWORD }
+            # The image refuses to initialise into a non-empty directory, and a
+            # mounted volume already contains lost+found.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            # A real query, not pg_isready: the image runs initdb against a
+            # temporary server on first boot, and pg_isready answers "accepting"
+            # during a window when the database is about to be restarted.
+            exec:
+              command: ["sh", "-c", "psql -U $POSTGRES_USER -d $POSTGRES_DB -c 'select 1'"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 5
+          livenessProbe:
+            # Deliberately weaker than readiness. Liveness failing means "restart
+            # this container", and restarting a database because one query was
+            # slow is a self-inflicted outage.
+            tcpSocket:
+              port: 5432
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 6
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 1Gi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

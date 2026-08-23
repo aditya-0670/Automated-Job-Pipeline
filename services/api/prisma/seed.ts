@@ -22,7 +22,19 @@ import { fileURLToPath } from "node:url";
 import { PrismaClient } from "@prisma/client";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const AI_FIXTURES = resolve(HERE, "../../ai/tests/fixtures");
+
+/**
+ * Where the profile and template live.
+ *
+ * By default, the AI service's fixtures -- the same document the pipeline is
+ * tested against, so the two cannot drift. That relative path only exists in a
+ * full checkout, which is fine for `make db-seed` and impossible inside the API
+ * image, whose build context is `services/api` alone. So the location is
+ * overridable: in Kubernetes the fixtures are injected as a ConfigMap and
+ * SEED_DATA_DIR points at the mount. One source of truth either way; only the
+ * delivery mechanism changes.
+ */
+const AI_FIXTURES = process.env.SEED_DATA_DIR || resolve(HERE, "../../ai/tests/fixtures");
 
 const prisma = new PrismaClient();
 
@@ -56,8 +68,11 @@ function readFixture(): { profile: Fixture; latex: string } {
     };
   } catch (cause) {
     throw new Error(
-      `Could not read the AI fixtures at ${AI_FIXTURES}. The seed reads the ` +
-        `pipeline's own profile so the two cannot drift; run it from a full checkout.`,
+      `Could not read the seed data at ${AI_FIXTURES}. It defaults to the AI ` +
+        `service's fixtures, so the seeded profile and the pipeline's tests cannot ` +
+        `drift -- run this from a full checkout, or set SEED_DATA_DIR to a ` +
+        `directory holding real_profile.json and real_resume.tex (in a cluster, ` +
+        `a ConfigMap built from those files).`,
       { cause },
     );
   }

@@ -1,0 +1,127 @@
+# The AI service. The one workload that is horizontally scaled, and the reason
+# it can be: it holds no session state. Every pipeline run is checkpointed to
+# Postgres after each node, so any replica can serve any session -- including a
+# session another replica started and a pod that no longer exists.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai
+spec:
+  selector:
+    app: ai
+  ports:
+    - port: 8000
+      targetPort: 8000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ai
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # Never fewer pods than we started with during an update. A pipeline in
+      # flight is checkpointed and would survive, but the SSE stream a user is
+      # watching would not, and a deploy should not be visible as a dropped
+      # connection.
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: ai
+    spec:
+      # Kubernetes injects a Docker-links compatibility variable for every
+      # Service in the namespace: a Service named `ai` produces AI_PORT,
+      # AI_SERVICE_HOST, AI_SERVICE_PORT and friends in *every* pod. That
+      # collided head-on with this service's own AI_PORT setting, which arrived
+      # as "tcp://10.96.59.213:8000" and failed pydantic validation at startup
+      # -- a crash loop whose cause is invisible unless you print the
+      # environment. The variables are a relic of Docker links; nothing here
+      # reads them, so they are turned off rather than worked around.
+      enableServiceLinks: false
+      # Spread replicas across nodes when possible. `ScheduleAnyway` and not
+      # `DoNotSchedule`: on a two-worker cluster a hard constraint would leave
+      # the third replica Pending forever, and an unschedulable pod is worse
+      # than an unevenly placed one.
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: ai
+      containers:
+        - name: ai
+          image: resumeforge-ai:k8s
+          # kind loads images into the node's containerd directly, so there is
+          # nothing to pull and no registry in this setup.
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef: { name: resumeforge-config }
+            - secretRef: { name: resumeforge-secrets }
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://resumeforge:$(POSTGRES_PASSWORD)@postgres:5432/resumeforge"
+          startupProbe:
+            # The AI service builds a 492-pattern automaton and runs the
+            # checkpointer's migrations at boot. A startup probe rather than a
+            # long initialDelay on liveness: this way slow boots are tolerated
+            # without also making a genuinely hung process take a minute to be
+            # noticed once it is running.
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 3
+            failureThreshold: 30
+          readinessProbe:
+            # /ready, not /health: readiness decides whether this pod receives
+            # traffic, and the service is not useful until the automaton exists.
+            httpGet: { path: /ready, port: 8000 }
+            periodSeconds: 10
+            timeoutSeconds: 3
+          livenessProbe:
+            # /health, not /ready: a failing dependency must not restart the
+            # process. Restarting does not fix Postgres, and the AI service
+            # degrades honestly without it.
+            httpGet: { path: /health, port: 8000 }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 200m, memory: 512Mi }
+            limits: { memory: 1536Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ai
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ai
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          # Deliberately not 80%. The expensive work here is waiting on an LLM,
+          # which costs latency rather than CPU, so CPU rising at all means real
+          # local work (extraction, LaTeX compilation) is queuing.
+          averageUtilization: 60
+  behavior:
+    scaleDown:
+      # Five minutes of calm before scaling in. A pipeline run takes a minute
+      # and arrives in bursts; a faster scale-down flaps.
+      stabilizationWindowSeconds: 300

@@ -35,7 +35,7 @@ vertical slice (Parts 2-11) comes before breadth (Parts 12-15), and infra
 | 16 | Docker Compose full-stack wiring | M | — | ✅ (ai/pg/redis; api+web seams ready) |
 | 17 | GitHub Actions CI | M | 16 | ✅ |
 | 18 | Jenkins pipeline | M | 17 | ✅ |
-| 19 | Kubernetes on kind | L | 16 | ⬜ |
+| 19 | Kubernetes on kind | L | 16 | ✅ |
 | 20 | AWS EC2 deploy + CD + observability | L | 17, 19 | ⬜ |
 
 **Interview-critical parts**: 1 (bullet 3), 7 + 10 (bullet 2 — retry and failure
@@ -837,7 +837,7 @@ for running CI against a clean environment rather than a developer's machine:
 
 ---
 
-## Part 19 — Kubernetes on kind ⬜ · L
+## Part 19 — Kubernetes on kind ✅ · L
 
 **Deliverables**
 - Install `kubectl` + `kind`; `infra/k8s/kind-cluster.yaml` (control plane + 2
@@ -847,12 +847,96 @@ for running CI against a clean environment rather than a developer's machine:
 - Probes on every workload (`liveness`, `readiness`, `startup` for the slow AI
   boot), resource requests/limits, `RollingUpdate` strategy.
 - Kustomize overlays for `dev` / `prod`.
-- `infra/k8s/README.md` — the demo script: scale the AI service to 3 replicas
-  and show sessions surviving because state lives in Postgres (this is the
-  concrete proof behind "distributed execution" in bullet 2).
+- `infra/k8s/README.md` — the demo script.
 
-**Acceptance**: `kind create cluster` → `kubectl apply -k` → app reachable via
-ingress; killing an AI pod mid-pipeline loses no work.
+**Acceptance**: ✅ both halves met. `make k8s-up` → the app answers on
+**http://localhost:8081** through the ingress, and a dev token fetched through it
+returns the seeded profile — 2 experiences, 2 projects, 34 skills, template
+present — so the whole stack is talking inside the cluster.
+
+And the durability claim, `make k8s-demo`, which is stronger than the plan asked
+for. The plan said "killing an AI pod loses no work"; the demo destroys **every**
+AI pod while a session is paused at the keyword gate, and then:
+
+```
+-- destroying every AI pod --
+   ai-59f64b45b9-4j57x
+   ai-59f64b45b9-wrvj4
+   ai-59f64b45b9-8wp5h 5s      (replacements)
+   ai-59f64b45b9-czvbg 5s
+-- the same session, on pods that did not exist when it started --
+ paused at keyword_review with 35 keywords ✓
+-- and it continues, not just reads --
+   EVALUATING human_review
+```
+
+The last line is the point: the session was not merely *readable* after its pods
+died, it **continued** — matching, refactoring and evaluating on pods that did
+not exist when it started. No pod ever held the session. The cluster carries no
+`GEMINI_API_KEY`, so the resume ran on the deterministic mock provider and cost
+nothing.
+
+**Delivered beyond plan**
+
+- **NetworkPolicies**, expressing the compose file's two-network split for
+  Kubernetes: `ai` accepts traffic only from `api`, and Postgres only from `ai`,
+  `api` and the migration Job. Without one, the `web` pod — the code closest to
+  the browser — could talk straight to the database.
+- **Migrations as a Job, not an init container.** An init container runs once per
+  replica and per restart, so scaling the gateway to three pods runs three
+  concurrent migrations racing on one advisory lock. A Job runs once and is
+  visible as a thing that succeeded or failed.
+- **The prod overlay deletes the committed dev Secret** rather than overriding
+  it, so a production apply fails loudly if the real secret was never created,
+  instead of quietly deploying with development credentials.
+- **Probes chosen per job, not copy-pasted**: liveness hits `/health` (nothing
+  but the process) while readiness hits `/ready` (dependencies) — a liveness
+  probe that fails when Postgres is down converts one outage into a crash loop.
+  Postgres inverts it: readiness runs a real `select 1`, liveness is only a TCP
+  check, because restarting a database over one slow query is self-inflicted.
+
+**Four things that went wrong, all worth knowing**
+
+1. **`AI_PORT` was not mine.** Kubernetes injects Docker-links compatibility
+   variables for every Service, so a Service named `ai` puts
+   `AI_PORT=tcp://10.96.59.213:8000` into every pod — which collided with this
+   service's own `AI_PORT` setting and failed integer validation at startup. A
+   crash loop whose cause is invisible unless you print the environment. Fixed
+   with `enableServiceLinks: false`: nothing here reads those variables.
+2. **kindnet enforces NetworkPolicy.** My own comment said it did not. The
+   migration Job sat retrying "waiting for postgres..." forever while the
+   gateway, which the policy allowed, connected fine. A policy only enforced in
+   production is a policy that fails in production.
+3. **The ingress controller floated off the node with the host ports.** kind's
+   `extraPortMappings` are per-node; ingress-nginx's kind manifest used to select
+   `ingress-ready=true` and as of v1.13 selects only `kubernetes.io/os: linux`.
+   The controller landed on a worker, reachable from inside the cluster and
+   nowhere else — a connection reset on localhost:8081 with a perfectly healthy
+   controller in its logs. Now pinned by an explicit committed patch.
+4. **The seed could not read its own data.** It reads the AI service's fixtures
+   by relative path so the seeded profile cannot drift from the pipeline's tests
+   — a path that exists in a checkout and not in the API image, whose build
+   context is `services/api` alone. The seed now honours `SEED_DATA_DIR` and the
+   cluster injects the same files as a ConfigMap: one source of truth, two
+   delivery mechanisms.
+
+**Two honest limitations**, both recorded in the README rather than hidden:
+
+- **Images are side-loaded, so every node that can run a workload needs a copy.**
+  The AI image is 3GB (Chromium for scraping, TeX Live for compilation), and this
+  machine did not have 9GB spare for three copies — the third replica failed
+  `ImagePullBackOff` exactly that way. Rather than leave that as a mystery, the
+  dev overlay pins application pods to nodes labelled
+  `resumeforge.dev/images-loaded`, applied by `make k8s-images` to the nodes it
+  loaded. That is the truth about a registry-less cluster, and the prod overlay
+  has no such selector because images come from a registry there. Part 20's GHCR
+  push removes the constraint entirely.
+- **The HPA reports `FailedGetResourceMetric`** on a bare kind cluster: nothing
+  serves `pods.metrics.k8s.io` without metrics-server. The autoscaler is correct
+  and inert. Left out because CPU is the wrong signal for this workload anyway —
+  the expensive part of a run is waiting on a model, which costs latency, not
+  CPU — which is also why the target is 60% rather than 80%: CPU rising at all
+  means real local work is queuing.
 
 ---
 

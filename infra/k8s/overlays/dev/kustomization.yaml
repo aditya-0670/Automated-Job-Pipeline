@@ -1,0 +1,57 @@
+# Development: everything in one command, nothing to configure.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# Application pods are pinned to nodes that hold a copy of their image.
+#
+# This is not a workaround, it is the truth about a cluster with no registry:
+# `kind load` side-loads an image onto the nodes you name, and a pod scheduled
+# anywhere else fails ImagePullBackOff because there is nowhere to pull from. The
+# label is applied by `make k8s-images` to the nodes it loaded. Left implicit,
+# the failure looks like a broken deployment rather than a missing image.
+#
+# The prod overlay has no such selector: images come from a registry there, and
+# every node can pull.
+patches:
+  - target: { kind: Deployment, name: ai }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { resumeforge.dev/images-loaded: "true" }
+  - target: { kind: Deployment, name: api }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { resumeforge.dev/images-loaded: "true" }
+  - target: { kind: Deployment, name: web }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { resumeforge.dev/images-loaded: "true" }
+  - target: { kind: Job, name: db-migrate }
+    patch: |
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: { resumeforge.dev/images-loaded: "true" }
+
+# Smaller requests, because a kind cluster shares one laptop's CPU with the
+# Docker daemon that runs it and the browser watching the result.
+  - target: { kind: Deployment, name: ai }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 100m
+  - target: { kind: Deployment, name: api }
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: 50m
+  # Debug logging on the services, not on Postgres.
+  - target: { kind: ConfigMap, name: resumeforge-config }
+    patch: |
+      - op: replace
+        path: /data/LOG_LEVEL
+        value: DEBUG

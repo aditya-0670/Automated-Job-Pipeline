@@ -1,0 +1,45 @@
+# One host, two paths. The browser's origin is then the same for the page and
+# the API, which is what keeps the gateway's CORS allowlist to a single entry
+# and means an EventSource connection is same-origin.
+#
+# Order matters: /api is listed first because ingress-nginx evaluates paths by
+# specificity and a `Prefix: /` rule would otherwise swallow it.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: resumeforge
+  annotations:
+    # SSE dies without these. nginx buffers proxied responses by default, which
+    # turns a live progress stream into one delivery at the end, and its 60s
+    # read timeout closes a stream that is quietly waiting on a slow LLM node.
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # A LaTeX template posted to /api/profile/latex exceeds the 1MB default.
+    nginx.ingress.kubernetes.io/proxy-body-size: "4m"
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 4000
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 4000
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 3000

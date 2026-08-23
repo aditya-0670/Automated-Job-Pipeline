@@ -1,0 +1,95 @@
+# Migrations as a Job, not an init container on the gateway.
+#
+# An init container would run the migration once per replica and once per
+# restart -- harmless for `migrate deploy`, which is idempotent, but it means
+# scaling the gateway to three pods runs three concurrent migrations against one
+# database and races on the advisory lock. A Job runs once per applied revision
+# and is visible as a thing that succeeded or failed, rather than as a delay in
+# a pod's startup.
+#
+# The AI service creates its own checkpoint tables at boot (LangGraph owns
+# `public`), so this Job only owns the `app` schema.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: db-migrate
+  annotations:
+    # Re-applying the manifest with an unchanged Job spec is an error in
+    # Kubernetes, so the demo script deletes it first. Recorded here because the
+    # error message ("field is immutable") does not suggest the fix.
+    resumeforge.dev/note: "delete before re-applying; Job specs are immutable"
+spec:
+  backoffLimit: 6
+  # Cleaned up an hour after finishing, so `kubectl get jobs` stays readable.
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        # A label of its own, not `app: api`: reusing the gateway's label would
+        # make this pod match the api Service's selector, and the Service would
+        # route user traffic to a migration job. It exists so the Postgres
+        # NetworkPolicy can name it.
+        app: db-migrate
+    spec:
+      restartPolicy: OnFailure
+      enableServiceLinks: false
+      initContainers:
+        # Waits for Postgres to actually answer a query. The StatefulSet being
+        # Ready is not the same as the database being ready to serve, and a
+        # migration that starts too early fails with a connection error that
+        # looks like a configuration problem.
+        - name: wait-for-postgres
+          image: postgres:17-alpine
+          command:
+            - sh
+            - -c
+            - |
+              until psql "$DATABASE_URL" -c 'select 1' >/dev/null 2>&1; do
+                echo "waiting for postgres..."
+                sleep 2
+              done
+              echo "postgres is serving"
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: resumeforge-secrets, key: POSTGRES_PASSWORD }
+            - name: DATABASE_URL
+              value: "postgresql://resumeforge:$(POSTGRES_PASSWORD)@postgres:5432/resumeforge"
+      containers:
+        - name: migrate
+          image: resumeforge-api:k8s
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              npx prisma migrate deploy
+              npx tsx prisma/seed.ts
+          envFrom:
+            - configMapRef: { name: resumeforge-config }
+            - secretRef: { name: resumeforge-secrets }
+          env:
+            - name: DATABASE_URL
+              value: "postgresql://resumeforge:$(POSTGRES_PASSWORD)@postgres:5432/resumeforge?schema=app"
+            # The seed's default path reaches into services/ai, which does not
+            # exist in this image -- its build context is services/api alone.
+            - name: SEED_DATA_DIR
+              value: /seed
+          volumeMounts:
+            - name: seed-data
+              mountPath: /seed
+              readOnly: true
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { memory: 768Mi }
+      volumes:
+        - name: seed-data
+          configMap:
+            # Built from the AI service's fixtures by `make k8s-seed-data`, so
+            # the seeded profile is byte-identical to the one the pipeline's own
+            # tests use. Optional so a missing ConfigMap fails the seed with a
+            # readable message rather than leaving the pod stuck in
+            # ContainerCreating.
+            name: seed-data
+            optional: true

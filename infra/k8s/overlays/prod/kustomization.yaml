@@ -1,0 +1,42 @@
+# Production shape. Not deployed anywhere yet -- Part 20 owns that -- but the
+# differences from dev are decisions, not placeholders.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+# The committed dev Secret is deliberately excluded. `resumeforge-secrets` must
+# already exist in the cluster, created by External Secrets, SOPS, or a human
+# with `kubectl create secret`. The application is identical either way; only
+# where the values come from changes.
+patches:
+  - path: drop-dev-secret.yaml
+  - target: { kind: Deployment, name: ai }
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target: { kind: Deployment, name: api }
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target: { kind: Deployment, name: web }
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target: { kind: HorizontalPodAutoscaler, name: ai }
+    patch: |
+      - op: replace
+        path: /spec/minReplicas
+        value: 2
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10
+  - target: { kind: ConfigMap, name: resumeforge-config }
+    patch: |
+      - op: replace
+        path: /data/AUTH_MODE
+        value: strict

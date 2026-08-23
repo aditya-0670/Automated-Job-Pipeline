@@ -1,0 +1,76 @@
+# The API gateway: the only workload the ingress routes to for /api, and the
+# only one holding the internal key.
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  selector:
+    app: api
+  ports:
+    - port: 4000
+      targetPort: 4000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      # Kubernetes injects a Docker-links compatibility variable for every
+      # Service in the namespace: a Service named `ai` produces AI_PORT,
+      # AI_SERVICE_HOST, AI_SERVICE_PORT and friends in *every* pod. That
+      # collided head-on with this service's own AI_PORT setting, which arrived
+      # as "tcp://10.96.59.213:8000" and failed pydantic validation at startup
+      # -- a crash loop whose cause is invisible unless you print the
+      # environment. The variables are a relic of Docker links; nothing here
+      # reads them, so they are turned off rather than worked around.
+      enableServiceLinks: false
+      containers:
+        - name: api
+          image: resumeforge-api:k8s
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4000
+          envFrom:
+            - configMapRef: { name: resumeforge-config }
+            - secretRef: { name: resumeforge-secrets }
+          env:
+            # `?schema=app`: Prisma owns the `app` schema and LangGraph owns the
+            # checkpoint tables in `public`, in the same database.
+            - name: DATABASE_URL
+              value: "postgresql://resumeforge:$(POSTGRES_PASSWORD)@postgres:5432/resumeforge?schema=app"
+            - name: API_PORT
+              value: "4000"
+          startupProbe:
+            httpGet: { path: /health, port: 4000 }
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            # /ready checks the database connection, which is what decides
+            # whether this pod can serve anything useful.
+            httpGet: { path: /ready, port: 4000 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /health, port: 4000 }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: 100m, memory: 192Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: ["ALL"] }

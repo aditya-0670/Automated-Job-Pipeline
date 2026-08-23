@@ -1,0 +1,27 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: resumeforge
+
+# Applied to every object, so `kubectl get all -l app.kubernetes.io/part-of=resumeforge`
+# finds the whole application and nothing else. `labels` with
+# includeSelectors:false rather than the deprecated `commonLabels`, which also
+# rewrites selectors -- and mutating a Deployment's selector is a change
+# Kubernetes rejects on an existing object.
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: resumeforge
+    includeSelectors: false
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - secret.yaml
+  - postgres.yaml
+  - redis.yaml
+  - ai.yaml
+  - api.yaml
+  - web.yaml
+  - ingress.yaml
+  - networkpolicy.yaml
+  - migrate-job.yaml

@@ -1,0 +1,36 @@
+# A three-node cluster: one control plane, two workers.
+#
+# Two workers rather than one because the interesting demonstration is a pod
+# being rescheduled onto a *different* node mid-pipeline and the session
+# surviving. On a single-node cluster that is indistinguishable from a restart,
+# and the claim being made is about distribution, not restarts.
+#
+#   kind create cluster --config infra/k8s/kind-cluster.yaml
+
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: resumeforge
+
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      # Label the control plane so the ingress controller's node selector finds
+      # it. Without this the controller stays Pending forever with an event
+      # nobody reads.
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      # The host ports the ingress answers on. kind runs the cluster inside
+      # Docker, so without these the ingress is reachable from other pods and
+      # from nothing else.
+      - containerPort: 80
+        hostPort: 8081
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 8443
+        protocol: TCP
+  - role: worker
+  - role: worker

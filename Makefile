@@ -314,6 +314,104 @@ ci-logs: ## Follow the Jenkins controller log
 ci-build: ## Trigger a Jenkins build and wait for the result
 	@set -a; source .env; set +a; ./infra/jenkins/build.sh
 
+# ── Kubernetes (Part 19) ──────────────────────────────────────────────────
+KIND_CLUSTER := resumeforge
+K8S_NS := resumeforge
+# The nodes that receive side-loaded images. Both workers by default; the AI
+# image is 3GB (Chromium + TeX Live), so on a machine short of disk this can be
+# narrowed to one and the dev overlay's nodeSelector will keep pods there.
+K8S_IMAGE_NODES ?= $(KIND_CLUSTER)-worker,$(KIND_CLUSTER)-worker2
+# ingress-nginx's kind manifest, pinned: the chart's defaults move, and one of
+# those moves is what silently unhooked the controller from the host ports.
+INGRESS_MANIFEST := https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.13.0/deploy/static/provider/kind/deploy.yaml
+
+.PHONY: k8s-up
+k8s-up: ## Create the cluster, load images, apply the dev overlay, migrate and seed
+	kind create cluster --config infra/k8s/kind-cluster.yaml
+	kubectl apply -f $(INGRESS_MANIFEST)
+	kubectl -n ingress-nginx patch deploy ingress-nginx-controller \
+		--patch-file infra/k8s/ingress-nginx-kind-patch.yaml
+	kubectl -n ingress-nginx rollout status deploy/ingress-nginx-controller --timeout=300s
+	$(MAKE) k8s-images
+	$(MAKE) k8s-apply
+	@echo "ResumeForge is at http://localhost:8081"
+
+.PHONY: k8s-images
+k8s-images: ## Build the cluster images and side-load them onto the workers
+	@# The browser reaches the gateway through the ingress, and NEXT_PUBLIC_* is
+	@# baked in at build time, so the web image is rebuilt for that origin.
+	docker build --target runtime -t resumeforge-ai:k8s $(AI_DIR)
+	docker build -t resumeforge-api:k8s $(API_DIR)
+	docker build --build-arg NEXT_PUBLIC_API_URL=http://localhost:8081 -t resumeforge-web:k8s services/web
+	@# Workers only: the control plane is tainted and runs no application pods,
+	@# so a copy there is several gigabytes of nothing.
+	for img in resumeforge-ai:k8s resumeforge-api:k8s resumeforge-web:k8s; do \
+		kind load docker-image $$img --name $(KIND_CLUSTER) \
+			--nodes $(K8S_IMAGE_NODES); \
+	done
+	@# Mark the nodes that now hold the images. The dev overlay pins application
+	@# pods to this label, because a pod scheduled onto a node without a copy
+	@# fails ImagePullBackOff -- there is no registry to pull from.
+	kubectl label node $$(echo $(K8S_IMAGE_NODES) | tr ',' ' ') \
+		resumeforge.dev/images-loaded=true --overwrite
+
+.PHONY: k8s-apply
+k8s-apply: ## Apply the dev overlay and run migrations
+	kubectl apply -k infra/k8s/overlays/dev
+	@# The seed reads the pipeline's own fixtures; they are injected rather than
+	@# baked into the image, which contains only services/api.
+	kubectl -n $(K8S_NS) create configmap seed-data \
+		--from-file=$(AI_DIR)/tests/fixtures/real_profile.json \
+		--from-file=$(AI_DIR)/tests/fixtures/real_resume.tex \
+		--dry-run=client -o yaml | kubectl apply -f -
+	@# Job specs are immutable, so re-applying needs the old one gone first.
+	kubectl -n $(K8S_NS) delete job db-migrate --ignore-not-found
+	kubectl apply -k infra/k8s/overlays/dev
+	kubectl -n $(K8S_NS) wait --for=condition=complete job/db-migrate --timeout=300s
+	kubectl -n $(K8S_NS) rollout status deploy/api --timeout=300s
+
+.PHONY: k8s-status
+k8s-status: ## Pods, services, ingress and the autoscaler
+	kubectl -n $(K8S_NS) get pods -o wide
+	kubectl -n $(K8S_NS) get svc,ingress,hpa
+
+.PHONY: k8s-demo
+k8s-demo: ## Start a run, destroy every AI pod, show the session survived. Spends nothing.
+	@set -euo pipefail; \
+	base=http://localhost:8081; \
+	token=$$(curl -fsS -X POST $$base/api/auth/dev-token | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'); \
+	body=$$(python3 -c 'import json,pathlib; print(json.dumps({"jobText": pathlib.Path("$(AI_DIR)/tests/fixtures/sample_jd.txt").read_text()}))'); \
+	sid=$$(curl -fsS -X POST -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' \
+		-d "$$body" $$base/api/sessions | python3 -c 'import json,sys; print(json.load(sys.stdin)["sessionId"])'); \
+	echo "session $$sid started"; sleep 6; \
+	curl -fsS -H "Authorization: Bearer $$token" $$base/api/sessions/$$sid \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); print(" paused at", d["paused_at"], "with", len(d["keyword_review"]["keywords"]), "keywords")'; \
+	echo "-- destroying every AI pod --"; \
+	kubectl -n $(K8S_NS) get pods -l app=ai --no-headers | awk '{print "   " $$1}'; \
+	kubectl -n $(K8S_NS) delete pod -l app=ai --wait=false >/dev/null; \
+	sleep 5; kubectl -n $(K8S_NS) rollout status deploy/ai --timeout=300s; \
+	kubectl -n $(K8S_NS) get pods -l app=ai --no-headers | awk '{print "   " $$1, $$5}'; \
+	echo "-- the same session, on pods that did not exist when it started --"; \
+	curl -fsS -H "Authorization: Bearer $$token" $$base/api/sessions/$$sid \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["paused_at"]=="keyword_review", d; print(" paused at", d["paused_at"], "with", len(d["keyword_review"]["keywords"]), "keywords ✓")'; \
+	echo "-- and it continues, not just reads --"; \
+	curl -fsS -X POST -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' -d '{}' \
+		$$base/api/sessions/$$sid/keywords >/dev/null; \
+	for i in $$(seq 1 30); do sleep 6; \
+		step=$$(curl -fsS -H "Authorization: Bearer $$token" $$base/api/sessions/$$sid \
+			| python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["step"], d["paused_at"])'); \
+		echo "   $$step"; \
+		case "$$step" in *human_review*|*FAILED*) break;; esac; \
+	done
+
+.PHONY: k8s-logs
+k8s-logs: ## Follow the AI service's logs across all replicas
+	kubectl -n $(K8S_NS) logs -f -l app=ai --max-log-requests=6 --tail=20
+
+.PHONY: k8s-down
+k8s-down: ## Delete the cluster
+	kind delete cluster --name $(KIND_CLUSTER)
+
 .PHONY: demo
 demo: ## SPENDS ~2 GEMINI CALLS. Full pipeline on the real resume.
 	@mkdir -p out && chmod 777 out
