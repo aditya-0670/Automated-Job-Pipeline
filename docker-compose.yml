@@ -92,26 +92,51 @@ services:
       start_period: 40s
       retries: 5
     networks: [backend]
-    # NOT published by default: `api` is the only legitimate caller. Set
-    # AI_PUBLISH_PORT=8000 in .env to reach it directly while `api` is unbuilt.
-    ports:
-      - "${AI_PUBLISH_PORT:-8000}:8000"
+    # No `ports`. `api` is the only legitimate caller and reaches this service
+    # over the backend network, so in production the AI service has no host-
+    # reachable address at all. The dev override republishes it for `make smoke`,
+    # which talks to it directly.
     security_opt:
       - no-new-privileges:true
 
-  # ── Part 13 ───────────────────────────────────────────────────────────
-  # api:
-  #   build: { context: ./services/api }
-  #   environment:
-  #     DATABASE_URL: postgresql://...@postgres:5432/...
-  #     AI_SERVICE_URL: http://ai:8000
-  #     INTERNAL_API_KEY: ${INTERNAL_API_KEY}
-  #     JWT_SECRET: ${JWT_SECRET}
-  #   depends_on:
-  #     ai: { condition: service_healthy }
-  #   ports: ["4000:4000"]
-  #   networks: [backend, frontend]
-  #
+  api:
+    build:
+      context: ./services/api
+      target: runtime
+    image: resumeforge-api:latest
+    restart: unless-stopped
+    environment:
+      # `?schema=app` is required: Prisma owns the `app` schema, LangGraph owns
+      # the checkpoint tables in `public`.
+      DATABASE_URL: ${API_DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://ai:8000
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY}
+      JWT_SECRET: ${JWT_SECRET}
+      # Encrypts stored GitHub PATs. Deliberately not defaulted here: the config
+      # validator refuses to start without it, which is the behaviour you want
+      # for the key protecting credentials at rest.
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      GITHUB_SYNC_TTL_MINUTES: ${GITHUB_SYNC_TTL_MINUTES:-60}
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      SEED_USER_EMAIL: ${SEED_USER_EMAIL:-aditya@resumeforge.dev}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      API_PORT: 4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      ai:
+        condition: service_healthy
+    ports:
+      - "${API_PUBLISH_PORT:-4000}:4000"
+    # On both networks: it is the only service the browser talks to, and the only
+    # one allowed to reach `ai` and `postgres`.
+    networks: [backend, frontend]
+    security_opt:
+      - no-new-privileges:true
+
   # ── Part 15 ───────────────────────────────────────────────────────────
   # web:
   #   build: { context: ./services/web }

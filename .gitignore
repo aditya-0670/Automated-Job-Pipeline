@@ -30,3 +30,7 @@ tmp/
 .vscode/
 .idea/
 .DS_Store
+
+# CI artifacts
+junit*.xml
+out/

@@ -1,0 +1,270 @@
+// ResumeForge — the user database.
+//
+// Two owners, one database. This schema owns the *user's* data: who they are,
+// what they have done, and the sessions they have run. LangGraph owns the
+// checkpoint tables (`checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) in
+// the same database and creates them itself on the AI service's boot. They are
+// deliberately absent from this file, and no migration here may touch them.
+//
+// The separation is enforced by Postgres, not by good intentions: these tables
+// live in the `app` schema, LangGraph's live in `public`, and DATABASE_URL for
+// this service must therefore carry `?schema=app`. Without it, Prisma looks at
+// `public`, finds three tables it did not create, and refuses to migrate at all
+// (P3005) — which is the database telling the truth about a boundary that was
+// only ever written in a comment.
+//
+// Migrations are also generated with `prisma migrate diff --from-empty` and
+// applied with `prisma migrate deploy`, never `migrate dev`: `migrate dev`
+// diffs the whole database against this schema and offers to reset on drift,
+// and a reset here would delete every in-flight session in the system.
+//
+// The shape these models must be able to produce is not arbitrary either: the
+// AI service consumes a `user_profile` document (see
+// services/ai/tests/fixtures/real_profile.json), and `src/profile.ts` builds it
+// from these rows. A field that cannot survive that round trip is a field the
+// pipeline cannot use.
+
+generator client {
+  provider = "prisma-client-js"
+  // Declared, not detected. Prisma picks the query-engine binary from whatever
+  // OpenSSL it finds where `generate` runs, so a build stage without openssl
+  // installed silently produced a 1.1.x engine for a 3.0.x runtime image and the
+  // container crash-looped on boot. The runtime's platform is a property of the
+  // runtime, so it is stated here rather than inferred from the builder.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String  @id @default(cuid())
+  email     String  @unique
+  name      String?
+  avatarUrl String?
+
+  // Auth. Nullable and unique-when-present: dev mode seeds a user with neither,
+  // and Google OAuth fills googleId in later behind the same seam (Part 13).
+  googleId    String? @unique
+  githubId    String? @unique
+  // Encrypted at the application layer before it ever reaches this column
+  // (AES-256-GCM, see src/crypto.ts). Stored on the user rather than in an env
+  // var because it is per-user data, and a PAT in the environment would be
+  // shared by every account.
+  githubToken    String?
+  githubUsername String?
+
+  /// The ETag of the last repo-list response. GitHub answers a conditional
+  /// request with 304 and **does not charge it against the rate limit**, so
+  /// keeping this turns "nothing changed" into a free answer rather than a
+  /// re-download of every repository.
+  githubReposEtag String?
+  /// When the last sync completed. Drives the freshness TTL, so a second sync
+  /// inside the window makes no API call at all.
+  githubSyncedAt DateTime?
+
+  /// The user's own LaTeX resume: the template the Refactorer must preserve and
+  /// the thing the whole product is editing. Text, not a file path -- a path
+  /// would rot the moment a container is replaced.
+  latexTemplate String? @db.Text
+
+  experiences  WorkExperience[]
+  projects     Project[]
+  skills       Skill[]
+  education    Education[]
+  achievements Achievement[]
+  sessions     ChatSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model WorkExperience {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  company  String
+  role     String
+  location String?
+
+  startDate DateTime  @db.Date
+  /// Null means "current". Deliberately not paired with an `isCurrent` boolean:
+  /// two columns describing one fact is two columns that can disagree, and the
+  /// resume renders "Present" from exactly this.
+  endDate   DateTime? @db.Date
+
+  /// The bullets as they appear on the resume. A real string array, not Json:
+  /// Postgres types it, Prisma types it, and ordering is meaningful.
+  bullets String[]
+
+  /// Long-form context the user writes once and never puts on a resume. This is
+  /// the evidence the Data Retriever matches keywords against, which is why it
+  /// is worth storing separately from the polished bullets.
+  detail String? @db.Text
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Every query is "this user's experiences, newest first".
+  @@index([userId, startDate(sort: Desc)])
+  @@map("work_experiences")
+}
+
+model Project {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  description String?  @db.Text
+  /// Technologies, in the order the user wants them read.
+  tech        String[]
+  bullets     String[]
+  detail      String?  @db.Text
+
+  startDate DateTime? @db.Date
+  endDate   DateTime? @db.Date
+
+  // ── GitHub sync (Part 14) ──
+  /// "manual" or "github". A synced project must never silently overwrite one
+  /// the user wrote by hand, and this is what lets the sync tell them apart.
+  source       String    @default("manual")
+  /// Unique per user, not globally: two users may each have a repo of the same
+  /// name, and the sync upserts on it.
+  repoName     String?
+  repoUrl      String?
+  stars        Int?
+  languages    Json?
+  topics       String[]
+  readme       String?   @db.Text
+  /// Drives the freshness TTL, so a second sync inside the window makes no API
+  /// call at all.
+  lastSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, repoName])
+  @@index([userId])
+  @@map("projects")
+}
+
+model Skill {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name        String
+  /// Mirrors the AI service's taxonomy categories (language, framework, tool,
+  /// cloud, database, concept...) so the two vocabularies do not drift.
+  category    String
+  proficiency String?
+
+  // A skill claimed twice is a resume that lists it twice.
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("skills")
+}
+
+model Education {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  institution String
+  degree      String
+  field       String?
+  /// Float, not Decimal: this is a 4.0 or 10.0 scale value shown to one or two
+  /// places, never summed and never compared for equality.
+  gpa         Float?
+  startYear   Int?
+  endYear     Int?
+  courses     String[]
+
+  @@index([userId])
+  @@map("education")
+}
+
+/// Not in the plan's MVP model list, and added deliberately. The AI service's
+/// evidence index treats achievements as first-class evidence
+/// (`app/matching/profile_index.py`), so without this table the seeded profile
+/// could not reproduce the document the pipeline is tested against -- the round
+/// trip in tests/profile.test.ts is what surfaced it.
+model Achievement {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title     String
+  issuer    String?
+  /// The claim itself ("Peak rating 2230, top 0.9% in India"). Free text on
+  /// purpose: it is matched against, not parsed.
+  detail    String?   @db.Text
+  date      DateTime? @db.Date
+  verifyUrl String?
+
+  // Ordering is the order the user entered them; achievements have no natural
+  // sort key and the resume lists them as written.
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("achievements")
+}
+
+model ChatSession {
+  id String @id @default(cuid())
+
+  /// **This id is also the LangGraph `thread_id`.** The link between the two
+  /// databases-in-one is this single value, so a session row and its checkpoint
+  /// thread are found by the same key and can never drift apart.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  jobUrl   String?
+  jobText  String? @db.Text
+  jobTitle String?
+  company  String?
+
+  /// A denormalised copy of the pipeline's terminal outputs. The checkpoint is
+  /// the source of truth while a session runs; these columns exist so listing
+  /// "my past resumes" is one indexed query instead of N checkpoint reads.
+  status         String  @default("running")
+  currentStep    String  @default("INIT")
+  keywords       Json?
+  generatedLatex String? @db.Text
+  pdfPath        String?
+  error          String? @db.Text
+
+  messages ChatMessage[]
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  // The session list, newest first.
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("chat_sessions")
+}
+
+model ChatMessage {
+  id        String      @id @default(cuid())
+  sessionId String
+  session   ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  /// "user" | "assistant" | "system"
+  role     String
+  content  String @db.Text
+  /// Step, token counts, decision -- whatever the UI needs to render the turn.
+  metadata Json?
+
+  createdAt DateTime @default(now())
+
+  // Always read as "this session's messages, in order".
+  @@index([sessionId, createdAt])
+  @@map("chat_messages")
+}

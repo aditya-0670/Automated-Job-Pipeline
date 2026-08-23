@@ -7,6 +7,7 @@
 SHELL := /bin/bash
 AI_DIR := services/ai
 AI_TEST_IMAGE := resumeforge-ai:test
+API_DIR := services/api
 # :z relabels the mount for SELinux (Fedora). Without it the container gets
 # PermissionError on every file under /app.
 AI_RUN := docker run --rm -v "$(PWD)/$(AI_DIR)":/app:z $(AI_TEST_IMAGE)
@@ -162,6 +163,108 @@ smoke-pipeline: ## Start a session over HTTP and prove the interrupt is durable.
 	curl -fsS -H "x-internal-key: $$INTERNAL_API_KEY" localhost:8000/internal/pipeline/$$sid \
 		| python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["paused_at"]=="keyword_review", d; print("still paused at", d["paused_at"], "with", len(d["keyword_review"]["keywords"]), "keywords ✓")'
 
+# ── The API service's database (Part 12) ──────────────────────────────────
+# Node runs in a container like everything else, attached to the compose network
+# so `postgres` resolves, and as the host user so nothing it writes ends up
+# root-owned. NODE_RUN is one line rather than five copies of it.
+NODE_IMAGE := node:22
+# --env-file supplies the shared secrets; the explicit -e after it overrides
+# DATABASE_URL, because the API service reaches the database through its own
+# `app` schema and .env's copy points at `public` (where LangGraph lives).
+NODE_RUN = docker run --rm -u "$$(id -u):$$(id -g)" -e HOME=/tmp \
+	--network resumeforge_backend --env-file .env \
+	-e DATABASE_URL="$$API_DATABASE_URL" \
+	-v "$(PWD)":/repo:z -w /repo/$(API_DIR) $(NODE_IMAGE)
+
+.PHONY: api-install
+api-install: ## Install the API service's dependencies
+	@set -a; source .env; set +a; $(NODE_RUN) npm install --no-audit --no-fund
+
+.PHONY: db-migrate
+db-migrate: ## Apply Prisma migrations to the `app` schema
+	@set -a; source .env; set +a; $(NODE_RUN) sh -c "npx prisma migrate deploy && npx prisma generate"
+
+.PHONY: db-seed
+db-seed: ## Seed the real profile. Idempotent.
+	@set -a; source .env; set +a; $(NODE_RUN) npx tsx prisma/seed.ts
+
+.PHONY: db-diff
+# Diffs the *live* database against schema.prisma. `--from-migrations` would be
+# the more orthodox source, but it needs a shadow database to replay into, and
+# the obvious shadow URL is the real one -- which Prisma drops and recreates.
+# `--from-url` only reads.
+db-diff: ## Write a new migration from the current schema.prisma. Never `migrate dev`.
+	@test -n "$(NAME)" || { echo "usage: make db-diff NAME=add_something"; exit 1; }
+	@set -a; source .env; set +a; \
+	mkdir -p $(API_DIR)/prisma/migrations/$(NAME); \
+	$(NODE_RUN) npx prisma migrate diff \
+		--from-url "$$API_DATABASE_URL" --to-schema-datamodel ./prisma/schema.prisma --script \
+		> $(API_DIR)/prisma/migrations/$(NAME)/migration.sql
+	@echo "wrote $(API_DIR)/prisma/migrations/$(NAME)/migration.sql -- review it before applying"
+
+.PHONY: api-test
+api-test: ## Typecheck and test the API service
+	@set -a; source .env; set +a; $(NODE_RUN) sh -c "npx tsc --noEmit && npx vitest run"
+
+.PHONY: db-psql-app
+db-psql-app: ## psql with the search path set to the API's schema
+	docker compose exec postgres psql -U resumeforge -d resumeforge -c "set search_path to app" -P pager=off
+
+.PHONY: smoke-gateway
+smoke-gateway: ## Drive the flow through the gateway only. Spends no tokens.
+	@set -euo pipefail; \
+	echo "-- the AI service must NOT be reachable from the host"; \
+	code=$$(curl -s -m 3 -o /dev/null -w '%{http_code}' localhost:8000/health || true); \
+	test "$$code" = "000" && echo "localhost:8000 unreachable ✓" || \
+		{ echo "AI service answered $$code from the host; it should be network-internal"; \
+		  echo "(the dev override publishes it on purpose -- run with -f docker-compose.yml)"; }; \
+	echo "-- /health and /ready"; curl -fsS localhost:4000/health; echo; curl -fsS localhost:4000/ready; echo; \
+	echo "-- unauthenticated (expect 401)"; \
+	code=$$(curl -s -o /dev/null -w '%{http_code}' localhost:4000/api/profile); \
+	test "$$code" = "401" && echo "401 ✓" || { echo "expected 401, got $$code"; exit 1; }; \
+	echo "-- dev token"; \
+	token=$$(curl -fsS -X POST localhost:4000/api/auth/dev-token | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'); \
+	echo "-- the profile the pipeline will be given"; \
+	curl -fsS -H "Authorization: Bearer $$token" localhost:4000/api/profile \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); p=d["profile"]; print(" experiences:", [e["company"] for e in p["experiences"]]); print(" projects   :", [x["name"] for x in p["projects"]]); print(" skills:", len(p["skills"]), "achievements:", len(p["achievements"]), "latex:", d["hasLatexTemplate"])'; \
+	echo "-- start a session"; \
+	body=$$(python3 -c 'import json,pathlib; print(json.dumps({"jobText": pathlib.Path("services/ai/tests/fixtures/sample_jd.txt").read_text()}))'); \
+	sid=$$(curl -fsS -X POST -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' \
+		-d "$$body" localhost:4000/api/sessions | python3 -c 'import json,sys; print(json.load(sys.stdin)["sessionId"])'); \
+	echo "   session $$sid"; \
+	echo "-- SSE, relayed through the gateway"; \
+	curl -fsS -N -m 8 -H "Authorization: Bearer $$token" localhost:4000/api/sessions/$$sid/stream | head -6; \
+	echo "-- status at the keyword gate"; \
+	curl -fsS -H "Authorization: Bearer $$token" localhost:4000/api/sessions/$$sid \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["paused_at"]=="keyword_review", d; print(" paused at", d["paused_at"], "with", len(d["keyword_review"]["keywords"]), "keywords ✓")'; \
+	echo; echo "Everything past this gate spends Gemini quota. To continue:"; \
+	echo "  curl -X POST -H \"Authorization: Bearer \$$token\" localhost:4000/api/sessions/$$sid/keywords -d '{}' -H 'Content-Type: application/json'"
+
+.PHONY: github-sync
+github-sync: ## Sync projects from your real GitHub. Needs GITHUB_TOKEN in .env.
+	@set -euo pipefail; \
+	source .env; \
+	test -n "$$GITHUB_TOKEN" || { \
+		echo "GITHUB_TOKEN is empty in .env."; \
+		echo "Create a classic PAT with the 'repo' scope (read is enough) and set it there."; \
+		exit 1; }; \
+	token=$$(curl -fsS -X POST localhost:4000/api/auth/dev-token | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])'); \
+	echo "-- storing the PAT (encrypted at rest)"; \
+	curl -fsS -X PUT -H "Authorization: Bearer $$token" -H 'Content-Type: application/json' \
+		-d "$$(python3 -c 'import json,os; print(json.dumps({"token": os.environ["GITHUB_TOKEN"], "username": os.environ.get("GITHUB_USERNAME") or None}))')" \
+		localhost:4000/api/profile/github/token; echo; \
+	echo "-- first sync"; \
+	curl -fsS -X POST -H "Authorization: Bearer $$token" localhost:4000/api/profile/github/sync \
+		| python3 -m json.tool; \
+	echo "-- second sync, immediately (must make zero API calls)"; \
+	curl -fsS -X POST -H "Authorization: Bearer $$token" localhost:4000/api/profile/github/sync \
+		| python3 -c 'import json,sys; d=json.load(sys.stdin); assert d["status"]=="fresh" and d["apiRequests"]==0, d; print(" status=fresh, apiRequests=0 ✓")'; \
+	echo "-- forced sync (asks GitHub, expects a free 304)"; \
+	curl -fsS -X POST -H "Authorization: Bearer $$token" "localhost:4000/api/profile/github/sync?force=true" \
+		| python3 -m json.tool; \
+	echo "-- the projects the pipeline can now draw on"; \
+	curl -fsS -H "Authorization: Bearer $$token" localhost:4000/api/profile \
+		| python3 -c 'import json,sys; p=json.load(sys.stdin)["profile"]; [print("  ", x["name"], "--", ", ".join(x["tech"][:4])) for x in p["projects"]]'
 # ── Jenkins (Part 18) ─────────────────────────────────────────────────────
 # HOST_WORKSPACE is the repository path as the *host's* Docker daemon sees it.
 # The Jenkins container mounts this tree as its workspace, but the daemon it

@@ -1,0 +1,44 @@
+{
+  "name": "@resumeforge/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "API gateway: owns the user database and fronts the AI service.",
+  "scripts": {
+    "db:generate": "prisma generate",
+    "db:migrate": "prisma migrate deploy",
+    "db:diff": "prisma migrate diff --from-migrations ./prisma/migrations --to-schema-datamodel ./prisma/schema.prisma --shadow-database-url $SHADOW_DATABASE_URL --script",
+    "db:seed": "tsx prisma/seed.ts",
+    "db:studio": "prisma studio",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js",
+    "token": "tsx src/scripts/token.ts",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.0",
+    "express": "5.1.0",
+    "zod": "4.1.11",
+    "pino": "9.13.1",
+    "pino-http": "10.5.0",
+    "jsonwebtoken": "9.0.2",
+    "ioredis": "5.9.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.1",
+    "prisma": "6.19.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "vitest": "3.2.4",
+    "@types/express": "5.0.3",
+    "@types/jsonwebtoken": "9.0.10",
+    "@types/supertest": "6.0.3",
+    "supertest": "7.1.4"
+  }
+}

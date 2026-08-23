@@ -202,6 +202,87 @@ jobs:
           docker run --rm resumeforge-ai:runtime-test \
             pytest tests/test_runtime_image.py -v
 
+  # ── API service ───────────────────────────────────────────────────────
+  api-test:
+    name: api · schema, migration and seed
+    needs: changes
+    if: needs.changes.outputs.api == 'true'
+    runs-on: ubuntu-latest
+
+    # A real Postgres again: the point of this job is that the migration applies
+    # and the seed produces a profile the AI pipeline can actually consume, and
+    # neither claim survives being mocked.
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: resumeforge
+          POSTGRES_PASSWORD: resumeforge
+          POSTGRES_DB: resumeforge_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U resumeforge -d resumeforge_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+
+    env:
+      # `?schema=app` for the same reason the service uses it: Prisma owns the
+      # `app` schema and LangGraph owns `public`.
+      DATABASE_URL: postgresql://resumeforge:resumeforge@localhost:5432/resumeforge_test?schema=app
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: services/api/package-lock.json
+      - name: Install dependencies
+        working-directory: services/api
+        run: npm ci --no-audit --no-fund
+      - name: Apply migrations
+        working-directory: services/api
+        # deploy, never `migrate dev`: see the note at the top of schema.prisma.
+        run: npx prisma migrate deploy && npx prisma generate
+      - name: Seed the real profile
+        working-directory: services/api
+        run: npx tsx prisma/seed.ts
+      - name: Seed again (must be idempotent)
+        working-directory: services/api
+        # A seed that duplicates rows on a second run is a seed that cannot be
+        # used in a deploy step, which is where this one is headed in Part 20.
+        run: npx tsx prisma/seed.ts
+      - name: Typecheck
+        working-directory: services/api
+        run: npx tsc --noEmit
+      - name: Test
+        working-directory: services/api
+        # Includes the round trip asserting the seeded database reproduces the
+        # AI service's profile fixture exactly, and the gateway's HTTP surface
+        # against a fake AI client.
+        run: npx vitest run
+      - name: Build the image
+        # The runtime image runs compiled JavaScript with a generated Prisma
+        # client, and both are build-time steps that can break without any test
+        # noticing -- the first attempt shipped a query engine built for the
+        # wrong OpenSSL and crash-looped on boot.
+        run: docker build -t resumeforge-api:ci services/api
+      - name: Smoke test the image
+        run: |
+          docker run -d --name api-ci --network host \
+            -e DATABASE_URL='postgresql://resumeforge:resumeforge@localhost:5432/resumeforge_test?schema=app' \
+            -e INTERNAL_API_KEY=ci-internal-key -e JWT_SECRET=ci-jwt-secret-value \
+            -e AI_SERVICE_URL=http://localhost:8000 resumeforge-api:ci
+          for i in $(seq 1 30); do
+            curl -fsS localhost:4000/health >/dev/null 2>&1 && break || sleep 1
+          done
+          curl -fsS localhost:4000/health
+          # /ready proves the container reached Postgres through the real client,
+          # which is the part the unit tests cannot cover.
+          curl -fsS localhost:4000/ready | grep -q '"database":"ok"'
+          code=$(curl -s -o /dev/null -w '%{http_code}' localhost:4000/api/profile)
+          test "$code" = "401" || { echo "expected 401, got $code"; exit 1; }
+          docker rm -f api-ci
+
   # ── Infra ─────────────────────────────────────────────────────────────
   compose-validate:
     name: infra · validate compose
@@ -225,7 +306,7 @@ jobs:
   ci-status:
     name: CI status
     runs-on: ubuntu-latest
-    needs: [ai-lint, ai-test, ai-integration, ai-build, compose-validate]
+    needs: [ai-lint, ai-test, ai-integration, ai-build, api-test, compose-validate]
     if: always()
     steps:
       - name: Fail if any job failed
